@@ -115,6 +115,8 @@ def build_install_plan(target, candidate, *, allow_unverified=False):
         warnings.append("Python ABI compatibility is unknown")
     if resolver_status == "resolver_failed" and not allow_unverified:
         warnings.append("apply would require --allow-unverified")
+    if "torchaudio" not in _candidate_managed_packages(candidate):
+        warnings.append("torchaudio is not included; audio workflows may be unavailable")
     warnings.append("apply removes stale managed ROCm/Torch packages before install")
 
     python = target.python_executable

@@ -50,6 +50,33 @@ class InstallPlanTests(unittest.TestCase):
         self.assertIn("--index-url", plan.command)
         self.assertIn("torch==2.12.0", plan.command)
 
+    def test_warns_when_torchaudio_is_not_included(self):
+        candidate = {
+            "id": "therock:windows:nightly:gfx1201",
+            "artifact_available": True,
+            "python_compatibility": "compatible",
+            "package_specs": ["torch==2.14.0"],
+            "index_url": "https://repo.example.test/",
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            result = dry_run_install(self._target(Path(directory)), candidate)
+
+        self.assertTrue(any("torchaudio is not included" in warning for warning in result.plan.warnings))
+
+    def test_does_not_warn_when_torchaudio_is_included(self):
+        candidate = {
+            "id": "legacy:windows:stable:gfx1201",
+            "artifact_available": True,
+            "python_compatibility": "compatible",
+            "wheel_urls": ["https://example.test/torchaudio-2.9.1.whl"],
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            result = dry_run_install(self._target(Path(directory)), candidate)
+
+        self.assertFalse(any("torchaudio is not included" in warning for warning in result.plan.warnings))
+
     def test_incompatible_candidate_is_rejected(self):
         candidate = {
             "id": "candidate",

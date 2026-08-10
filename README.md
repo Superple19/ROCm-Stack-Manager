@@ -62,6 +62,8 @@ running pip. Applying a failed-resolver candidate additionally requires
 `--allow-unverified`.
 During an apply, stale managed ROCm and PyTorch packages are removed before
 the selected candidate is installed; unrelated application extensions remain.
+Plans warn when the selected package set does not include `torchaudio`; this is
+safe for image-only ComfyUI use but may affect audio workflows.
 The `restore` command (also available as `rollback`) accepts a backup JSON path
 and is dry-run by default. It reinstalls recorded versions with
 `--force-reinstall`; it does not remove extra packages.
