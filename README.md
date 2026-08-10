@@ -9,6 +9,14 @@ The first command detects an existing portable or virtual-environment layout:
 
 ```powershell
 python -m rocm_stack_manager detect --target C:\path\to\comfyui-portable
+python -m rocm_stack_manager candidates `
+  --catalog C:\path\to\rocm-evidence-matrix\data\catalog.json `
+  --target C:\path\to\comfyui-portable `
+  --platform windows --gfx gfx1201 --channel stable
+python -m rocm_stack_manager plan `
+  --catalog C:\path\to\rocm-evidence-matrix\data\catalog.json `
+  --target C:\path\to\comfyui-portable `
+  --platform windows --gfx gfx1201 --candidate <candidate-id>
 ```
 
 The selected target is expected to contain a `ComfyUI` directory with
@@ -16,7 +24,9 @@ The selected target is expected to contain a `ComfyUI` directory with
 are discovered from common portable and virtual-environment locations.
 
 This repository is independent of the ComfyUI source tree. It does not bundle
-ComfyUI, ROCm, PyTorch, or third-party wheels.
+ComfyUI, ROCm, PyTorch, or third-party wheels. The `candidates` and `plan`
+commands are read-only: they consume a local Matrix catalog and produce a
+dry-run plan without changing the target environment.
 
 ## Repository layout
 
