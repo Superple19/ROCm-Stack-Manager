@@ -1,0 +1,73 @@
+"""Contracts shared by application-specific ROCm adapters."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, Protocol, runtime_checkable
+
+from .launch import LaunchOptions, LaunchPlan
+
+
+class AdapterError(RuntimeError):
+    """Base error for adapter discovery and capability failures."""
+
+
+class CapabilityUnavailable(AdapterError):
+    """Raised when an adapter does not implement a requested capability."""
+
+
+@runtime_checkable
+class RuntimeAdapter(Protocol):
+    """Common target operations exposed by every application adapter."""
+
+    id: str
+
+    def detect(self, path: Path | str = ".") -> Any:
+        ...
+
+    def inventory(self, target: Any, candidate: dict | None = None) -> Any:
+        ...
+
+    def plan(
+        self,
+        target: Any,
+        candidate: dict,
+        selections: tuple[str, ...] = (),
+    ) -> Any:
+        ...
+
+    def verify(self, target: Any) -> Any:
+        ...
+
+    def launch(self, target: Any, options: LaunchOptions) -> LaunchPlan:
+        ...
+
+
+@runtime_checkable
+class PythonPackageAdapter(Protocol):
+    """Optional capability for adapters with a target Python resolver."""
+
+    def python_tag(self, target: Any) -> str | None:
+        ...
+
+
+@runtime_checkable
+class ExtensionProvider(Protocol):
+    """Optional application-specific extension inventory and planning."""
+
+    def extension_inventory(
+        self,
+        target: Any,
+        candidate: dict | None = None,
+        profile_documents: dict | None = None,
+    ) -> dict:
+        ...
+
+    def extension_plan(
+        self,
+        target: Any,
+        candidate: dict,
+        selections: tuple[str, ...] = (),
+        profile_documents: dict | None = None,
+    ) -> Any:
+        ...
