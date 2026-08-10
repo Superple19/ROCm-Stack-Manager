@@ -60,6 +60,33 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(len(candidates), 1)
         self.assertEqual(candidates[0]["channel"], "stable")
         self.assertTrue(candidates[0]["id"].startswith("therock:windows:stable:gfx1201:"))
+        self.assertEqual(candidates[0]["candidate_kind"], "installable")
+
+    def test_historical_artifact_without_install_source_is_artifact_only(self):
+        catalog = _matrix()
+        catalog["_historical_candidates"] = [
+            {
+                "id": "therock:nightly:10.1.0:torch",
+                "distribution_family": "therock",
+                "platform": "windows",
+                "channel": "nightly",
+                "rocm_version": "10.1.0",
+                "torch_version": "2.14.0",
+                "python_tags": ["cp312"],
+                "available_gfx_targets": ["gfx1201"],
+                "artifact_available": True,
+            }
+        ]
+
+        candidates = iter_candidates(
+            catalog,
+            platform="windows",
+            gfx="gfx1201",
+            channel="nightly",
+            python_tag="cp312",
+        )
+
+        self.assertEqual(candidates[0]["candidate_kind"], "artifact_only")
 
     def test_candidate_consumes_comfyui_profile(self):
         catalog = _matrix()

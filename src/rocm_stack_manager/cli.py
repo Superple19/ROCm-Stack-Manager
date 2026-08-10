@@ -109,15 +109,27 @@ def _print_candidates(candidates, json_output):
     if not candidates:
         print("No matching candidates.")
         return
-    for candidate in candidates:
-        resolver = candidate.get("resolver_status")
-        resolver_text = f" | Resolver {resolver}" if resolver else ""
-        print(
-            f"{candidate['id']} | {candidate['rocm_version'] or 'unknown'} | "
-            f"Torch {candidate['torch_version'] or 'unknown'} | "
-            f"Python {candidate['python_compatibility']} | "
-            f"{candidate['distribution_family']} | {candidate['status']}{resolver_text}"
-        )
+    installable = [item for item in candidates if item.get("candidate_kind") == "installable"]
+    artifact_only = [item for item in candidates if item.get("candidate_kind") == "artifact_only"]
+    unavailable = [item for item in candidates if item.get("candidate_kind") == "unavailable"]
+
+    def print_group(title, items):
+        if not items:
+            return
+        print(title)
+        for candidate in items:
+            resolver = candidate.get("resolver_status")
+            resolver_text = f" | Resolver {resolver}" if resolver else ""
+            print(
+                f"{candidate['id']} | {candidate['rocm_version'] or 'unknown'} | "
+                f"Torch {candidate['torch_version'] or 'unknown'} | "
+                f"Python {candidate['python_compatibility']} | "
+                f"{candidate['distribution_family']} | {candidate['status']}{resolver_text}"
+            )
+
+    print_group("Installable candidates:", installable)
+    print_group("Artifact-only records (not installable):", artifact_only)
+    print_group("Unavailable records:", unavailable)
 
 
 def _candidate_for_plan(catalog, args, python_tag):

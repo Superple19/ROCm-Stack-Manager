@@ -102,6 +102,10 @@ def build_install_plan(target, candidate, *, allow_unverified=False):
 
     if not candidate.get("artifact_available"):
         raise InstallationError(f"candidate is not artifact-available: {candidate.get('id', 'unknown')}")
+    if candidate.get("candidate_kind") == "artifact_only":
+        raise InstallationError(
+            f"candidate has artifact evidence only and no install source: {candidate.get('id', 'unknown')}"
+        )
     if candidate.get("python_compatibility") == "incompatible":
         raise InstallationError(f"candidate is incompatible with target Python: {candidate.get('id', 'unknown')}")
 

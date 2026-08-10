@@ -169,6 +169,13 @@ def _candidate_from_channel(target, platform, channel, details, catalog, python_
         "source_id": source_id,
         "index_url": source.get("url"),
         "package_specs": package_specs,
+        "candidate_kind": (
+            "installable"
+            if available and package_specs
+            else "artifact_only"
+            if available
+            else "unavailable"
+        ),
         "artifact_available": available,
         "status": "artifact_available" if available else "artifact_unavailable",
         "lifecycle": "current",
@@ -234,6 +241,9 @@ def _historical_candidate(candidate, gfx, python_tag, profile=None):
         "resolver_status": evidence_status.get("resolver", "not_collected"),
         "wheel_urls": wheel_urls,
         "package_specs": [],
+        "candidate_kind": "installable" if artifact_available and wheel_urls else (
+            "artifact_only" if artifact_available else "unavailable"
+        ),
     }
     profile_status, profile_warnings, profile_id = evaluate_candidate(candidate_result, profile)
     candidate_result.update(

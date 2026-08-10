@@ -5,7 +5,30 @@ ROCm application runtimes.
 
 The manager never assumes a machine-specific installation path. A target is
 provided explicitly or resolved relative to the current working directory.
-The first command detects an existing portable or virtual-environment layout:
+
+## Install from a clone
+
+The repository uses a standard `src` package layout. Install it into a
+virtual environment before invoking the module or console script; do not set
+`PYTHONPATH` manually.
+
+```powershell
+git clone <repository-url>
+cd rocm-stack-manager
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install --editable .
+.\.venv\Scripts\Activate.ps1
+.\.venv\Scripts\python.exe -m rocm_stack_manager --help
+.\.venv\Scripts\rocm-stack-manager.exe --help
+```
+
+After activation, the examples below can use `python -m rocm_stack_manager`.
+On Linux, use `.venv/bin/activate`, `.venv/bin/python`, and
+`.venv/bin/rocm-stack-manager` instead.
+
+The first command after installation detects an existing portable or
+virtual-environment layout:
 
 ```powershell
 python -m rocm_stack_manager detect --target C:\path\to\comfyui-portable
@@ -51,6 +74,11 @@ dry-run plan without changing the target environment.
 Candidate listing reads the selected interpreter's CPython tag and excludes
 artifact candidates whose recorded wheel tags do not support it. Missing ABI
 evidence remains explicitly marked as `unknown`.
+Candidate output distinguishes `installable` records, which have exact
+package specifications or direct wheel URLs, from `artifact_only` records,
+which preserve availability evidence but cannot produce an install command.
+Artifact-only records remain visible for provenance and are rejected by plan
+and install commands.
 When the catalog is from ROCM Evidence Matrix, the adjacent
 `profiles/comfyui/profile.json` is loaded automatically. Candidate output then
 includes the profile status and warnings without promoting a candidate to

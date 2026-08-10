@@ -35,6 +35,10 @@ def build_plan(target, candidate, extensions=()):
         raise PlanningError(
             f"candidate is not artifact-available: {candidate.get('id', 'unknown')}"
         )
+    if candidate.get("candidate_kind") == "artifact_only":
+        raise PlanningError(
+            f"candidate has artifact evidence only and no install source: {candidate.get('id', 'unknown')}"
+        )
     if candidate.get("python_compatibility") == "incompatible":
         raise PlanningError(
             f"candidate is incompatible with target Python: {candidate.get('id', 'unknown')}"

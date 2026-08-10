@@ -88,6 +88,17 @@ class InstallPlanTests(unittest.TestCase):
             with self.assertRaises(InstallationError):
                 build_install_plan(self._target(Path(directory)), candidate)
 
+    def test_artifact_only_candidate_is_rejected(self):
+        candidate = {
+            "id": "therock:nightly:10.1.0:artifact-only",
+            "artifact_available": True,
+            "candidate_kind": "artifact_only",
+            "python_compatibility": "compatible",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(InstallationError):
+                build_install_plan(self._target(Path(directory)), candidate)
+
     def test_apply_removes_stale_managed_packages_before_install(self):
         candidate = {
             "id": "legacy:stable:7.2.1",
