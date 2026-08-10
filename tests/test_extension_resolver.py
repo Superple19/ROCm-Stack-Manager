@@ -43,6 +43,27 @@ class ExtensionResolverTests(unittest.TestCase):
         self.assertEqual(results[0].candidate_hash, "core-hash")
         self.assertEqual(results[0].extension_candidate_id, self.extension["extension_candidate_id"])
 
+    def test_unverified_artifact_can_run_preflight_without_install_approval(self):
+        extension = dict(self.extension)
+        extension.update({
+            "status": "unverified",
+            "claim_status": "unverified",
+            "preflight_eligible": True,
+        })
+        command = build_extension_resolver_command(self.target, self.candidate, extension)
+        self.assertIn("https://files.example/bitsandbytes.whl", command)
+        completed = type("Completed", (), {"returncode": 0, "stdout": "resolved", "stderr": ""})()
+        result = run_extension_resolver(
+            self.target,
+            self.candidate,
+            [extension],
+            runner=lambda *args, **kwargs: completed,
+        )[0]
+        self.assertEqual(result.status, "resolver_verified")
+        self.assertEqual(result.claim_status, "unverified")
+        self.assertTrue(result.preflight)
+        self.assertEqual(result.as_dict()["promotion"], "none")
+
 
 if __name__ == "__main__":
     unittest.main()

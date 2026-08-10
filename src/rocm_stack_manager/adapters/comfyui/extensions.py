@@ -340,6 +340,14 @@ def _catalog_details(profile, candidate, extension_catalog):
     }
 
 
+def _is_unestablished_constraint(message):
+    return message in {
+        "Python ABI is not established by the profile",
+        "GFX compatibility is not established by the profile",
+        "Torch/ROCm/HIP ABI is not established by the profile",
+    }
+
+
 def _extension_plan_record(profile, document, candidate, installed, extension_catalog=None):
     constraint = _matrix_constraint(document)
     claim_status = _claim_status(document, constraint)
@@ -347,8 +355,17 @@ def _extension_plan_record(profile, document, candidate, installed, extension_ca
     sources = _exact_sources(document, constraint)
     catalog = _catalog_details(profile, candidate, extension_catalog)
     catalog_latest = catalog["latest_artifact"]
-    if not sources and evidence_refs and catalog["target_match"] == "matched" and catalog_latest:
+    if not sources and catalog["target_match"] == "matched" and catalog_latest:
         sources = tuple(catalog["matching_sources"])
+    constraint_mismatches = _constraint_mismatches(document, constraint, candidate)
+    preflight_eligible = bool(
+        catalog["target_match"] == "matched"
+        and catalog["matching_sources"]
+        and catalog["extension_candidate_ids"]
+        and not catalog["dependency_mismatches"]
+        and not any(not _is_unestablished_constraint(item) for item in constraint_mismatches)
+        and not (installed and any(package.get("status") == "conflict" for package in installed))
+    )
     reasons = []
     if installed and any(package.get("status") == "conflict" for package in installed):
         status = "conflict"
@@ -374,13 +391,21 @@ def _extension_plan_record(profile, document, candidate, installed, extension_ca
         if catalog["target_match"] in {"incompatible", "unknown"}:
             reasons.append(f"Matrix artifact target match is {catalog['target_match']}")
         reasons.extend(catalog["dependency_mismatches"])
-        reasons.extend(_constraint_mismatches(document, constraint, candidate))
+        reasons.extend(constraint_mismatches)
         status = "blocked" if reasons else "installable"
+    if status == "unverified" and preflight_eligible:
+        preflight_reason = "artifact source and target tags match; profile compatibility claims remain unverified"
+    elif preflight_eligible:
+        preflight_reason = "exact artifact source and target constraints match"
+    else:
+        preflight_reason = "artifact source or target evidence is insufficient for preflight"
     return {
         "id": profile.id,
         "name": profile.display_name,
         "role": profile.role,
         "status": status,
+        "preflight_eligible": preflight_eligible,
+        "preflight_reason": preflight_reason,
         "claim_status": claim_status,
         "candidate_hash": candidate.get("candidate_hash"),
         "extension_candidate_id": (catalog["extension_candidate_ids"] or [None])[0],
@@ -414,6 +439,7 @@ class ExtensionPlan:
     extensions: tuple[dict, ...]
     commands: tuple[dict, ...] = ()
     warnings: tuple[str, ...] = ()
+    allow_unverified: bool = False
 
     def as_dict(self):
         return {
@@ -422,6 +448,7 @@ class ExtensionPlan:
             "extensions": list(self.extensions),
             "commands": list(self.commands),
             "warnings": list(self.warnings),
+            "allow_unverified": self.allow_unverified,
             "network_access": False,
             "installation_performed": False,
         }
@@ -555,6 +582,7 @@ def build_extension_plan(
     profile_documents=None,
     selections=(),
     extension_catalog=None,
+    allow_unverified=False,
 ):
     """Build a read-only, evidence-gated extension installation plan."""
 
@@ -578,20 +606,24 @@ def build_extension_plan(
         installed = tuple(package for package in inventory.packages if _matches(profile, package))
         record = _extension_plan_record(profile, document, candidate, installed, extension_catalog)
         records.append(record)
-        if record["status"] == "installable" and not record["already_installed"]:
+        experimental = record["status"] == "unverified" and record["preflight_eligible"]
+        if (record["status"] == "installable" or (allow_unverified and experimental)) and not record["already_installed"]:
             command = [str(target.python_executable), "-m", "pip", "install", "--no-input"]
             command.extend(record["sources"])
-            commands.append({"extension_id": profile.id, "command": command})
+            commands.append({"extension_id": profile.id, "command": command, "experimental": experimental})
 
     warnings = []
     if not commands:
         warnings.append("no extension has sufficient Matrix evidence for installation")
+    elif allow_unverified and any(item["status"] == "unverified" for item in records):
+        warnings.append("unverified extension apply explicitly enabled; run targeted preflight first")
     return ExtensionPlan(
         target_root=target.root,
         candidate=candidate,
         extensions=tuple(records),
         commands=tuple(commands),
         warnings=tuple(warnings),
+        allow_unverified=allow_unverified,
     )
 
 
@@ -608,9 +640,18 @@ def package_names_for_extensions(extension_ids=()):
 
 
 def apply_extension_plan(target, plan, backup, timeout=3600):
-    """Apply only a fully installable extension plan."""
+    """Apply an installable plan or an explicitly approved preflight plan."""
 
-    blocked = [item for item in plan.extensions if item["status"] != "installable"]
+    blocked = [
+        item
+        for item in plan.extensions
+        if item["status"] != "installable"
+        and not (
+            plan.allow_unverified
+            and item["status"] == "unverified"
+            and item.get("preflight_eligible")
+        )
+    ]
     if blocked:
         names = ", ".join(item["id"] for item in blocked)
         raise ValueError(f"extension plan contains non-installable selections: {names}")

@@ -16,6 +16,8 @@ class ExtensionResolverResult:
     command: tuple[str, ...]
     returncode: int | None = None
     output: str = ""
+    claim_status: str | None = None
+    preflight: bool = False
 
     def as_dict(self):
         return {
@@ -27,6 +29,9 @@ class ExtensionResolverResult:
             "command": list(self.command),
             "returncode": self.returncode,
             "output": self.output,
+            "claim_status": self.claim_status,
+            "verification_scope": "preflight" if self.preflight else "install_plan",
+            "promotion": "none",
             "network_access": True,
             "installation_performed": False,
         }
@@ -43,8 +48,8 @@ def build_extension_resolver_command(target, candidate, extension):
 
     if not extension.get("extension_candidate_id"):
         raise ValueError(f"extension {extension.get('id', 'unknown')} has no exact candidate identity")
-    if extension.get("status") != "installable":
-        raise ValueError(f"extension {extension.get('id', 'unknown')} is not installable")
+    if extension.get("status") != "installable" and not extension.get("preflight_eligible"):
+        raise ValueError(f"extension {extension.get('id', 'unknown')} is not eligible for preflight")
     requirements = _requirements(candidate, extension)
     if not requirements:
         raise ValueError(f"extension {extension.get('id', 'unknown')} has no exact source")
@@ -85,6 +90,8 @@ def run_extension_resolver(target, candidate, extensions, *, timeout=900, runner
                     status="not_applicable",
                     command=(),
                     output=str(error),
+                    claim_status=extension.get("claim_status"),
+                    preflight=bool(extension.get("preflight_eligible")),
                 )
             )
             continue
@@ -110,6 +117,8 @@ def run_extension_resolver(target, candidate, extensions, *, timeout=900, runner
                     command=command,
                     returncode=completed.returncode,
                     output=output,
+                    claim_status=extension.get("claim_status"),
+                    preflight=bool(extension.get("preflight_eligible")),
                 )
             )
         except (OSError, subprocess.TimeoutExpired) as error:
@@ -122,6 +131,8 @@ def run_extension_resolver(target, candidate, extensions, *, timeout=900, runner
                     status="resolver_failed",
                     command=command,
                     output=f"{type(error).__name__}: {error}",
+                    claim_status=extension.get("claim_status"),
+                    preflight=bool(extension.get("preflight_eligible")),
                 )
             )
     return tuple(results)

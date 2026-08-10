@@ -134,6 +134,68 @@ class ExtensionReportTests(unittest.TestCase):
         self.assertTrue(all(item["status"] == "unverified" for item in plan.extensions))
         self.assertEqual(plan.commands, ())
 
+    def test_unverified_matching_artifact_is_preflightable_but_not_installable(self):
+        target = type("Target", (), {"root": Path("C:/target"), "python_executable": Path("C:/target/python.exe")})()
+        inventory = PackageInventory(Path("C:/target"), target.python_executable, (), "detected")
+        candidate = {
+            "id": "therock:windows:nightly:gfx1201:10.1.0:2.14.0",
+            "candidate_hash": "core-hash",
+            "artifact_available": True,
+            "candidate_kind": "installable",
+            "platform": "windows",
+            "gfx": "gfx1201",
+            "python_tag": "cp312",
+            "torch_version": "2.14.0",
+            "rocm_version": "10.1.0",
+        }
+        catalog = {
+            "extensions": [{
+                "id": "extension:bitsandbytes:0.50.0",
+                "extension": "bitsandbytes",
+                "package_name": "bitsandbytes",
+                "version": "0.50.0",
+                "source_id": "packages-pypi-bitsandbytes",
+                "artifacts": [{
+                    "candidate_id": "extension:bitsandbytes:0.50.0:py3:win_amd64:hash",
+                    "python_tag": "py3",
+                    "platform_tag": "win_amd64",
+                    "url": "https://files.example/bitsandbytes.whl",
+                    "requires_dist": [],
+                }],
+                "candidate_ids": ["extension:bitsandbytes:0.50.0:py3:win_amd64:hash"],
+                "python_tags": ["py3"],
+                "platform_tags": ["win_amd64"],
+                "artifact_urls": ["https://files.example/bitsandbytes.whl"],
+                "requires_dist": [],
+                "gfx_targets": [],
+                "artifact_available": True,
+            }]
+        }
+
+        plan = build_extension_plan(
+            target,
+            inventory,
+            candidate,
+            extension_catalog=catalog,
+            selections=("bitsandbytes",),
+        )
+
+        record = plan.extensions[0]
+        self.assertEqual(record["status"], "unverified")
+        self.assertTrue(record["preflight_eligible"])
+        self.assertEqual(plan.commands, ())
+
+        approved = build_extension_plan(
+            target,
+            inventory,
+            candidate,
+            extension_catalog=catalog,
+            selections=("bitsandbytes",),
+            allow_unverified=True,
+        )
+        self.assertTrue(approved.allow_unverified)
+        self.assertTrue(approved.commands[0]["experimental"])
+
     def test_exact_evidence_and_constraints_make_extension_installable(self):
         target = type("Target", (), {"root": Path("C:/target"), "python_executable": Path("C:/target/python.exe")})()
         inventory = PackageInventory(Path("C:/target"), target.python_executable, (), "detected")

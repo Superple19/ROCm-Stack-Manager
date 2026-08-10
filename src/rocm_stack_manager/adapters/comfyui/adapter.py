@@ -53,7 +53,15 @@ class ComfyUIAdapter:
         inventory = self.inventory(target, candidate)
         return build_extension_report(inventory, profile_documents, candidate, extension_catalog)
 
-    def extension_plan(self, target, candidate, selections=(), profile_documents=None, extension_catalog=None):
+    def extension_plan(
+        self,
+        target,
+        candidate,
+        selections=(),
+        profile_documents=None,
+        extension_catalog=None,
+        allow_unverified=False,
+    ):
         inventory = self.inventory(target, candidate)
         return build_extension_plan(
             target,
@@ -62,6 +70,7 @@ class ComfyUIAdapter:
             profile_documents,
             selections,
             extension_catalog,
+            allow_unverified,
         )
 
     def extension_verify(self, target, candidate, selections=(), profile_documents=None, extension_catalog=None):
@@ -79,7 +88,16 @@ class ComfyUIAdapter:
         )
 
     def create_extension_backup(self, target, plan, destination=None):
-        blocked = [item for item in plan.extensions if item["status"] != "installable"]
+        blocked = [
+            item
+            for item in plan.extensions
+            if item["status"] != "installable"
+            and not (
+                plan.allow_unverified
+                and item["status"] == "unverified"
+                and item.get("preflight_eligible")
+            )
+        ]
         if blocked:
             names = ", ".join(item["id"] for item in blocked)
             raise CapabilityUnavailable(

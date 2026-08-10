@@ -77,6 +77,8 @@ class ExtensionProvider(Protocol):
         candidate: dict,
         selections: tuple[str, ...] = (),
         profile_documents: dict | None = None,
+        extension_catalog: dict | None = None,
+        allow_unverified: bool = False,
     ) -> Any:
         ...
 

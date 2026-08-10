@@ -111,6 +111,11 @@ def parse_args(argv=None):
     extensions.add_argument("--backup", type=Path, help="Extension backup JSON for restore")
     extensions.add_argument("--backup-dir", type=Path, help="Optional extension backup directory")
     extensions.add_argument("--apply", action="store_true", help="Apply or restore after an explicit dry-run")
+    extensions.add_argument(
+        "--allow-unverified",
+        action="store_true",
+        help="Allow an artifact-matched unverified extension after manual preflight review",
+    )
     _add_adapter_option(extensions)
     extensions.add_argument("--json", action="store_true", dest="json_output")
     extensions.add_argument("--output", type=Path, help="Optional JSON output path for extension verification")
@@ -324,6 +329,7 @@ def main(argv=None):
                     tuple(args.selections),
                     extension_profiles,
                     extension_catalog,
+                    args.allow_unverified,
                 )
                 results = run_extension_resolver(target, candidate, plan.extensions)
                 payload = {
@@ -383,6 +389,7 @@ def main(argv=None):
                     tuple(args.selections),
                     extension_profiles,
                     extension_catalog,
+                    args.allow_unverified,
                 )
                 backup = adapter.create_extension_backup(target, plan, args.backup_dir)
                 result = adapter.apply_extension_plan(target, plan, backup)
@@ -406,6 +413,7 @@ def main(argv=None):
                     tuple(args.selections),
                     extension_profiles,
                     extension_catalog,
+                    args.allow_unverified,
                 )
                 if args.json_output:
                     print(json.dumps(plan.as_dict(), indent=2, sort_keys=True))

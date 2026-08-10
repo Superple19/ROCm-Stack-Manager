@@ -129,7 +129,9 @@ unverified and therefore remain blocked from installation.
 `extensions resolve` runs a targeted `pip --dry-run` for only the selected
 core candidate and extension artifacts. It records the exact core candidate
 hash and extension candidate ID, never installs packages, and does not test
-all historical combinations. `extensions verify` runs selected extension
+all historical combinations. An artifact-matched but `unverified` profile may
+run this preflight; the result keeps `claim_status: unverified` and is never an
+automatic install approval. `extensions verify` runs selected extension
 imports and a small target-local GPU tensor smoke test when the target runtime
 and hardware are detected. It writes a user-reviewable evidence JSON with
 runtime and hardware details; the export is explicitly not promoted to Matrix
@@ -137,8 +139,11 @@ compatibility evidence automatically.
 `extensions apply` requires both the `apply` action and `--apply`; it creates
 an extension-only backup before running any command. If any selected
 extension is blocked, unverified, conflicting, or missing evidence, the whole
-operation is rejected. `extensions restore` is dry-run by default and never
-prunes unrelated packages.
+operation is rejected. An artifact-matched `unverified` extension can be
+explicitly approved with `--allow-unverified` after reviewing a successful
+targeted `extensions resolve` preflight; this does not promote the profile to
+verified. `extensions restore` is dry-run by default and never prunes unrelated
+packages.
 The `install` command emits a target-local pip command by default. It never
 executes pip unless `--apply` is explicitly provided, and candidates with failed
 resolver evidence produce an explicit warning requiring `--allow-unverified`.
