@@ -10,6 +10,11 @@ The first command detects an existing portable or virtual-environment layout:
 ```powershell
 python -m rocm_stack_manager detect --target C:\path\to\comfyui-portable
 python -m rocm_stack_manager verify --target C:\path\to\comfyui-portable --json
+python -m rocm_stack_manager inventory `
+  --catalog C:\path\to\rocm-evidence-matrix\data\catalog.json `
+  --target C:\path\to\comfyui-portable `
+  --platform windows --gfx gfx1201 `
+  --candidate <candidate-id>
 python -m rocm_stack_manager candidates `
   --catalog C:\path\to\rocm-evidence-matrix\data\catalog.json `
   --target C:\path\to\comfyui-portable `
@@ -31,6 +36,9 @@ dry-run plan without changing the target environment.
 Candidate listing reads the selected interpreter's CPython tag and excludes
 artifact candidates whose recorded wheel tags do not support it. Missing ABI
 evidence remains explicitly marked as `unknown`.
+The `inventory` command reads installed distributions from the selected target
+Python and classifies them against one candidate. Compiled extensions without
+matching evidence remain `unknown`; they are never assumed compatible.
 The `verify` command executes only the selected target's Python interpreter. It
 does not call a globally installed ROCm executable; host GPU state is reported
 separately from target-local Torch, HIP, and ROCm package metadata.

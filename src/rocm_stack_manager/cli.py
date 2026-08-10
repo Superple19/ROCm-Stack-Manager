@@ -9,6 +9,7 @@ from pathlib import Path
 from .adapters.comfyui.detect import detect_comfyui, python_tag_comfyui, verify_comfyui
 from .core.catalog import CatalogError, iter_candidates, load_catalog
 from .core.detection import TargetDetectionError
+from .core.inventory import collect_inventory
 from .core.planning import PlanningError, build_plan
 
 
@@ -46,6 +47,11 @@ def parse_args(argv=None):
     _add_catalog_options(plan)
     plan.add_argument("--candidate", required=True, help="Exact Matrix candidate ID")
     plan.add_argument("--json", action="store_true", dest="json_output")
+
+    inventory = subparsers.add_parser("inventory", help="Inspect target-local packages")
+    _add_catalog_options(inventory)
+    inventory.add_argument("--candidate", required=True, help="Exact Matrix candidate ID")
+    inventory.add_argument("--json", action="store_true", dest="json_output")
     return parser.parse_args(argv)
 
 
@@ -92,6 +98,20 @@ def _candidate_for_plan(catalog, args, python_tag):
     raise CatalogError(f"candidate not found for {args.platform}/{args.gfx}: {args.candidate}")
 
 
+def _print_inventory(inventory, json_output):
+    if json_output:
+        print(json.dumps(inventory.as_dict(), indent=2, sort_keys=True))
+        return
+    values = inventory.as_dict()
+    print(f"Target: {values['target_root']}")
+    print(f"Inventory: {values['status']}")
+    print(f"Compatible: {values['summary']['compatible']}")
+    print(f"Conflict: {values['summary']['conflict']}")
+    print(f"Unknown: {values['summary']['unknown']}")
+    for package in values["packages"]:
+        print(f"{package['name']}=={package['version']} | {package['status']} | {package['reason']}")
+
+
 def main(argv=None):
     args = parse_args(argv)
     try:
@@ -132,6 +152,9 @@ def main(argv=None):
             return 0
 
         candidate = _candidate_for_plan(catalog, args, python_tag)
+        if args.command == "inventory":
+            _print_inventory(collect_inventory(target, candidate), args.json_output)
+            return 0
         plan = build_plan(target, candidate)
         if args.json_output:
             print(json.dumps(plan.as_dict(), indent=2, sort_keys=True))
