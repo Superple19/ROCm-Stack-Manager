@@ -117,6 +117,7 @@ def build_install_plan(target, candidate, *, allow_unverified=False):
         warnings.append("apply would require --allow-unverified")
     if "torchaudio" not in _candidate_managed_packages(candidate):
         warnings.append("torchaudio is not included; audio workflows may be unavailable")
+    warnings.extend(f"ComfyUI profile: {warning}" for warning in candidate.get("profile_warnings", ()))
     warnings.append("apply removes stale managed ROCm/Torch packages before install")
 
     python = target.python_executable

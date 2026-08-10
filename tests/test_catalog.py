@@ -61,6 +61,38 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(candidates[0]["channel"], "stable")
         self.assertTrue(candidates[0]["id"].startswith("therock:windows:stable:gfx1201:"))
 
+    def test_candidate_consumes_comfyui_profile(self):
+        catalog = _matrix()
+        catalog["_comfyui_profile"] = {
+            "id": "comfyui",
+            "constraints": [
+                {"id": "supported-platform", "value": ["windows", "linux"]},
+                {"id": "rocm-channel", "value": {"allowed": ["stable", "nightly", "staging"]}},
+                {"id": "rocm-package-candidate", "value": {"distribution_families": ["therock", "legacy"]}},
+                {"id": "torch-rocm", "value": {"torch_series": ["2.12"]}},
+            ],
+        }
+
+        candidate = iter_candidates(catalog, platform="windows", gfx="gfx1201")[0]
+
+        self.assertEqual(candidate["profile_id"], "comfyui")
+        self.assertEqual(candidate["profile_status"], "documented")
+        self.assertEqual(candidate["profile_warnings"], [])
+
+    def test_candidate_profile_warns_for_out_of_scope_torch_series(self):
+        catalog = _matrix()
+        catalog["_comfyui_profile"] = {
+            "id": "comfyui",
+            "constraints": [
+                {"id": "torch-rocm", "value": {"torch_series": ["2.14"]}},
+            ],
+        }
+
+        candidate = iter_candidates(catalog, platform="windows", gfx="gfx1201")[0]
+
+        self.assertEqual(candidate["profile_status"], "out_of_profile")
+        self.assertTrue(any("Torch series 2.12" in warning for warning in candidate["profile_warnings"]))
+
     def test_filters_candidates_by_target_python_tag(self):
         catalog = _matrix()
         catalog["_package_snapshots"] = {

@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from .adapters.comfyui.detect import detect_comfyui, python_tag_comfyui, verify_comfyui
+from .adapters.comfyui.extensions import build_extension_report
 from .core.catalog import CatalogError, iter_candidates, load_catalog
 from .core.backup import BackupError, create_backup, load_backup
 from .core.detection import TargetDetectionError
@@ -63,6 +64,11 @@ def parse_args(argv=None):
     _add_catalog_options(inventory)
     inventory.add_argument("--candidate", required=True, help="Exact Matrix candidate ID")
     inventory.add_argument("--json", action="store_true", dest="json_output")
+
+    extensions = subparsers.add_parser("extensions", help="Report ComfyUI extension compatibility")
+    extensions.add_argument("--target", type=Path, required=True, help="Portable root or ComfyUI directory")
+    extensions.add_argument("--catalog", type=Path, help="Optional Matrix catalog.json for profile evidence")
+    extensions.add_argument("--json", action="store_true", dest="json_output")
 
     install = subparsers.add_parser("install", help="Create a target-local package install dry-run")
     _add_catalog_options(install)
@@ -188,6 +194,30 @@ def main(argv=None):
                     print(f"Warning: {warning}")
                 if result.output:
                     print(result.output.rstrip())
+            return 0
+
+        if args.command == "extensions":
+            extension_profiles = {}
+            if args.catalog:
+                extension_profiles = load_catalog(args.catalog).get("_comfyui_extension_profiles", {})
+            report = build_extension_report(collect_inventory(target), extension_profiles)
+            if args.json_output:
+                print(json.dumps(report, indent=2, sort_keys=True))
+            else:
+                print(f"Target: {report['target_root']}")
+                print("Mode: local inventory only (no network, no installation)")
+                for extension in report["extensions"]:
+                    installed = ", ".join(
+                        f"{package['name']}=={package['version']}"
+                        for package in extension["installed"]
+                    ) or "not installed"
+                    print(f"{extension['name']} | {extension['status']} | {installed}")
+                    if extension.get("matrix_profile_id"):
+                        print(
+                            f"  Matrix profile: {extension['matrix_profile_id']} | "
+                            f"claim={extension['matrix_claim_status']}"
+                        )
+                    print(f"  Reason: {extension['reason']}")
             return 0
 
         catalog = load_catalog(args.catalog)

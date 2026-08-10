@@ -10,6 +10,9 @@ The first command detects an existing portable or virtual-environment layout:
 ```powershell
 python -m rocm_stack_manager detect --target C:\path\to\comfyui-portable
 python -m rocm_stack_manager verify --target C:\path\to\comfyui-portable --json
+python -m rocm_stack_manager extensions `
+  --target C:\path\to\comfyui-portable `
+  --catalog C:\path\to\rocm-evidence-matrix\data\catalog.json
 python -m rocm_stack_manager inventory `
   --catalog C:\path\to\rocm-evidence-matrix\data\catalog.json `
   --target C:\path\to\comfyui-portable `
@@ -48,12 +51,20 @@ dry-run plan without changing the target environment.
 Candidate listing reads the selected interpreter's CPython tag and excludes
 artifact candidates whose recorded wheel tags do not support it. Missing ABI
 evidence remains explicitly marked as `unknown`.
+When the catalog is from ROCM Evidence Matrix, the adjacent
+`profiles/comfyui/profile.json` is loaded automatically. Candidate output then
+includes the profile status and warnings without promoting a candidate to
+runtime compatibility.
 The `--rocm` filter includes historical candidates when the Matrix catalog has
 preserved their complete artifact evidence. A historical version is not shown
 as installable merely because a release name exists in documentation.
 The `inventory` command reads installed distributions from the selected target
 Python and classifies them against one candidate. Compiled extensions without
 matching evidence remain `unknown`; they are never assumed compatible.
+The `extensions` command reports known ComfyUI extensions from local inventory
+only. With `--catalog`, it also displays the Matrix extension profile and its
+claim/evidence status. It does not contact package hosts, install extensions,
+or treat an installed extension as compatible without ABI/runtime evidence.
 The `install` command emits a target-local pip command by default. It never
 executes pip unless `--apply` is explicitly provided, and candidates with failed
 resolver evidence produce an explicit warning requiring `--allow-unverified`.

@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from urllib.parse import unquote
 
+from .profile import ProfileError, evaluate_candidate, load_profile
+
 
 class CatalogError(ValueError):
     """Raised when a Matrix catalog cannot be loaded or interpreted."""
@@ -30,6 +32,7 @@ def load_catalog(path):
     catalog_path = Path(path).expanduser().resolve()
     document = _read_json(catalog_path)
     if "targets" in document:
+        _attach_profile(document, catalog_path)
         return document
 
     artifacts = document.get("artifacts", [])
@@ -52,6 +55,7 @@ def load_catalog(path):
         raise CatalogError(f"compatibility matrix has no targets: {matrix_path}")
     matrix["_package_snapshots"] = {}
     matrix["_historical_candidates"] = []
+    _attach_profile(matrix, catalog_path)
     for artifact in artifacts:
         artifact_id = artifact.get("id", "")
         if not artifact.get("path"):
@@ -70,6 +74,30 @@ def load_catalog(path):
             elif artifact_id == "package_history":
                 matrix["_historical_candidates"] = document.get("candidates", [])
     return matrix
+
+
+def _attach_profile(catalog, catalog_path):
+    roots = []
+    if catalog_path.parent.name == "data":
+        roots.append(catalog_path.parent.parent)
+    roots.append(catalog_path.parent)
+    for root in roots:
+        profile_path = root / "profiles" / "comfyui" / "profile.json"
+        if not profile_path.is_file():
+            continue
+        try:
+            catalog["_comfyui_profile"] = load_profile(profile_path)
+        except ProfileError as error:
+            raise CatalogError(str(error)) from error
+        catalog["_comfyui_profile_path"] = str(profile_path)
+        extension_profiles = {}
+        extension_root = profile_path.parent / "extensions"
+        for extension_path in sorted(extension_root.glob("*.json")):
+            document = _read_json(extension_path)
+            if document.get("id", "").startswith("comfyui."):
+                extension_profiles[document["id"].removeprefix("comfyui.")] = document
+        catalog["_comfyui_extension_profiles"] = extension_profiles
+        return
 
 
 def _candidate_id(platform, channel, gfx, rocm_version, torch_version):
@@ -129,7 +157,7 @@ def _candidate_from_channel(target, platform, channel, details, catalog, python_
                 f"amd-torchvision-device-{target['gfx']}=={torchvision_version}",
             )
         )
-    return {
+    candidate = {
         "id": _candidate_id(platform, channel, target["gfx"], rocm_version, torch_version),
         "distribution_family": "therock",
         "platform": platform,
@@ -147,9 +175,20 @@ def _candidate_from_channel(target, platform, channel, details, catalog, python_
         "python_tag": python_tag,
         "python_compatibility": _python_compatibility(catalog, platform, channel, target["gfx"], python_tag),
     }
+    profile_status, profile_warnings, profile_id = evaluate_candidate(
+        candidate, catalog.get("_comfyui_profile")
+    )
+    candidate.update(
+        {
+            "profile_id": profile_id,
+            "profile_status": profile_status,
+            "profile_warnings": list(profile_warnings),
+        }
+    )
+    return candidate
 
 
-def _historical_candidate(candidate, gfx, python_tag):
+def _historical_candidate(candidate, gfx, python_tag, profile=None):
     gfx_targets = set(candidate.get("available_gfx_targets") or candidate.get("gfx_targets") or [])
     if gfx not in gfx_targets:
         return None
@@ -176,7 +215,7 @@ def _historical_candidate(candidate, gfx, python_tag):
         )
         if source_url and source_url not in wheel_urls:
             wheel_urls.insert(0, source_url)
-    return {
+    candidate_result = {
         "id": candidate.get("id"),
         "distribution_family": candidate.get("distribution_family", "legacy"),
         "platform": candidate.get("platform"),
@@ -196,6 +235,15 @@ def _historical_candidate(candidate, gfx, python_tag):
         "wheel_urls": wheel_urls,
         "package_specs": [],
     }
+    profile_status, profile_warnings, profile_id = evaluate_candidate(candidate_result, profile)
+    candidate_result.update(
+        {
+            "profile_id": profile_id,
+            "profile_status": profile_status,
+            "profile_warnings": list(profile_warnings),
+        }
+    )
+    return candidate_result
 
 
 def iter_candidates(
@@ -248,7 +296,9 @@ def iter_candidates(
             continue
         if not gfx:
             continue
-        candidate = _historical_candidate(historical, gfx, python_tag)
+        candidate = _historical_candidate(
+            historical, gfx, python_tag, catalog.get("_comfyui_profile")
+        )
         if not candidate:
             continue
         if (
