@@ -13,6 +13,7 @@ from urllib.request import Request, urlopen
 from urllib.parse import unquote
 
 from .profile import ProfileError, evaluate_candidate, load_profile
+from .identity import candidate_hash
 
 
 class CatalogError(ValueError):
@@ -335,6 +336,7 @@ def _candidate_from_channel(target, platform, channel, details, catalog, python_
             "profile_warnings": list(profile_warnings),
         }
     )
+    candidate["candidate_hash"] = candidate_hash(candidate)
     return candidate
 
 
@@ -396,6 +398,7 @@ def _historical_candidate(candidate, gfx, python_tag, profile=None):
             "profile_warnings": list(profile_warnings),
         }
     )
+    candidate_result["candidate_hash"] = candidate_hash(candidate_result)
     return candidate_result
 
 

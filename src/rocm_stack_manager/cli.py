@@ -12,6 +12,7 @@ from .core.adapter import (
     CapabilityUnavailable,
     ExtensionInstaller,
     ExtensionProvider,
+    ExtensionVerifier,
     PythonPackageAdapter,
 )
 from .core.catalog import CatalogError, ensure_catalog, iter_candidates, load_catalog
@@ -25,6 +26,7 @@ from .core.install import (
     build_restore_plan,
     dry_run_install,
 )
+from .core.extension_resolver import run_extension_resolver
 from .core.planning import PlanningError
 
 
@@ -97,7 +99,7 @@ def parse_args(argv=None):
     extensions.add_argument(
         "action",
         nargs="?",
-        choices=("report", "plan", "apply", "restore"),
+        choices=("report", "plan", "resolve", "verify", "apply", "restore"),
         default="report",
     )
     extensions.add_argument("--target", type=Path, required=True, help="Portable root or ComfyUI directory")
@@ -111,6 +113,7 @@ def parse_args(argv=None):
     extensions.add_argument("--apply", action="store_true", help="Apply or restore after an explicit dry-run")
     _add_adapter_option(extensions)
     extensions.add_argument("--json", action="store_true", dest="json_output")
+    extensions.add_argument("--output", type=Path, help="Optional JSON output path for extension verification")
 
     install = subparsers.add_parser("install", help="Create a target-local package install dry-run")
     _add_catalog_options(install)
@@ -276,7 +279,7 @@ def main(argv=None):
 
             extension_profiles = {}
             catalog = None
-            needs_catalog = bool(args.catalog) or args.action in {"plan", "apply"} or bool(args.candidate)
+            needs_catalog = bool(args.catalog) or args.action in {"plan", "resolve", "verify", "apply"} or bool(args.candidate)
             if needs_catalog:
                 catalog_path = ensure_catalog(
                     args.catalog,
@@ -284,7 +287,8 @@ def main(argv=None):
                     refresh=args.refresh_catalog,
                 )
                 catalog = load_catalog(catalog_path)
-                extension_profiles = catalog.get("_comfyui_extension_profiles", {})
+            extension_profiles = catalog.get("_comfyui_extension_profiles", {})
+            extension_catalog = catalog.get("_extension_catalog", {})
             if not isinstance(adapter, ExtensionProvider):
                 raise CapabilityUnavailable(
                     f"adapter does not provide ComfyUI extension operations: {adapter.id}"
@@ -309,6 +313,61 @@ def main(argv=None):
                     ),
                     python_tag,
                 )
+            if args.action == "resolve":
+                if candidate is None:
+                    raise CatalogError("extensions resolve requires --catalog and --candidate")
+                if not args.selections:
+                    raise ValueError("extensions resolve requires at least one --extension")
+                plan = adapter.extension_plan(
+                    target,
+                    candidate,
+                    tuple(args.selections),
+                    extension_profiles,
+                    extension_catalog,
+                )
+                results = run_extension_resolver(target, candidate, plan.extensions)
+                payload = {
+                    "candidate_id": candidate.get("id"),
+                    "candidate_hash": candidate.get("candidate_hash"),
+                    "results": [result.as_dict() for result in results],
+                }
+                if args.json_output:
+                    print(json.dumps(payload, indent=2, sort_keys=True))
+                else:
+                    for result in results:
+                        print(f"{result.extension_id} | {result.status}")
+                        if result.output:
+                            print(result.output.rstrip())
+                return 0 if all(result.status in {"resolver_verified", "not_applicable"} for result in results) else 2
+            if args.action == "verify":
+                if candidate is None:
+                    raise CatalogError("extensions verify requires --catalog and --candidate")
+                if not args.selections:
+                    raise ValueError("extensions verify requires at least one --extension")
+                if not isinstance(adapter, ExtensionVerifier):
+                    raise CapabilityUnavailable(
+                        f"adapter does not provide extension verification: {adapter.id}"
+                    )
+                evidence = adapter.extension_verify(
+                    target,
+                    candidate,
+                    tuple(args.selections),
+                    extension_profiles,
+                    extension_catalog,
+                )
+                if args.output:
+                    args.output.parent.mkdir(parents=True, exist_ok=True)
+                    temporary = args.output.with_suffix(args.output.suffix + ".tmp")
+                    temporary.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+                    temporary.replace(args.output)
+                if args.json_output or args.output:
+                    print(json.dumps(evidence, indent=2, sort_keys=True))
+                else:
+                    print(f"Candidate: {evidence['candidate_id']}")
+                    print(f"Verification: {evidence['verification_level']}")
+                    for extension in evidence["extensions"]:
+                        print(f"{extension['extension_id']} | {extension['status']}")
+                return 0
             if args.action == "apply":
                 if not args.apply:
                     raise InstallationError("extensions apply requires --apply")
@@ -323,6 +382,7 @@ def main(argv=None):
                     candidate,
                     tuple(args.selections),
                     extension_profiles,
+                    extension_catalog,
                 )
                 backup = adapter.create_extension_backup(target, plan, args.backup_dir)
                 result = adapter.apply_extension_plan(target, plan, backup)
@@ -345,6 +405,7 @@ def main(argv=None):
                     candidate,
                     tuple(args.selections),
                     extension_profiles,
+                    extension_catalog,
                 )
                 if args.json_output:
                     print(json.dumps(plan.as_dict(), indent=2, sort_keys=True))
@@ -365,7 +426,7 @@ def main(argv=None):
                     for warning in plan.warnings:
                         print(f"Warning: {warning}")
                 return 0
-            report = adapter.extension_inventory(target, candidate, extension_profiles)
+            report = adapter.extension_inventory(target, candidate, extension_profiles, extension_catalog)
             if args.json_output:
                 print(json.dumps(report, indent=2, sort_keys=True))
             else:

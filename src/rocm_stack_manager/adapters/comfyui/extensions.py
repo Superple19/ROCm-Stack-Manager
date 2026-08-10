@@ -7,6 +7,7 @@ import subprocess
 from urllib.parse import urlparse
 
 from ...core.backup import ExtensionBackupSnapshot
+from ...core.identity import extension_candidate_id
 from ...core.verify import _clean_environment
 
 @dataclass(frozen=True)
@@ -153,6 +154,137 @@ def _version_key(value):
     return tuple(parts)
 
 
+_REQUIREMENT_RE = re.compile(r"^\s*([A-Za-z0-9_.-]+)\s*(.*)$")
+
+
+def _version_compare(left, right):
+    left_key = (str(left), _version_key(left))
+    right_key = (str(right), _version_key(right))
+    if left_key < right_key:
+        return -1
+    if left_key > right_key:
+        return 1
+    return 0
+
+
+def _requirement_satisfied(specifier, version):
+    if not specifier:
+        return True
+    for clause in str(specifier).split(","):
+        clause = clause.strip()
+        match = re.match(r"(===|==|!=|>=|<=|>|<)\s*(.+)$", clause)
+        if not match:
+            return False
+        operator, expected = match.groups()
+        if operator == "==" and expected.endswith(".*"):
+            satisfied = str(version).startswith(expected[:-2])
+        else:
+            comparison = _version_compare(version, expected)
+            satisfied = {
+                "===": str(version) == expected,
+                "==": comparison == 0,
+                "!=": comparison != 0,
+                ">=": comparison >= 0,
+                "<=": comparison <= 0,
+                ">": comparison > 0,
+                "<": comparison < 0,
+            }[operator]
+        if not satisfied:
+            return False
+    return True
+
+
+def _parse_requirement(raw):
+    match = _REQUIREMENT_RE.match(str(raw).split(";", 1)[0])
+    if not match:
+        return None, None
+    return _normalize(match.group(1)), match.group(2).strip()
+
+
+def _requirement_mismatches(record, candidate):
+    mismatches = []
+    values = {
+        "torch": candidate.get("torch_version"),
+        "torchvision": candidate.get("torchvision_version"),
+        "torchaudio": candidate.get("torchaudio_version"),
+        "rocm": candidate.get("rocm_version"),
+        "hip": candidate.get("hip_version"),
+    }
+    requirements = list(record.get("requires_dist") or ())
+    requirements.extend(record.get("torch_constraints") or ())
+    requirements.extend(record.get("rocm_constraints") or ())
+    requirements.extend(record.get("hip_constraints") or ())
+    for raw_requirement in dict.fromkeys(requirements):
+        name, specifier = _parse_requirement(raw_requirement)
+        if name is None:
+            mismatches.append(f"unparseable dependency requirement: {raw_requirement}")
+            continue
+        if name not in values:
+            continue
+        version = values[name]
+        if version is None:
+            mismatches.append(f"{name} dependency cannot be matched without a candidate version")
+        elif not _requirement_satisfied(specifier, version):
+            mismatches.append(f"{name} {version} does not satisfy {specifier}")
+    return mismatches
+
+
+def _artifact_matches(artifact, candidate):
+    python_tag = candidate.get("python_tag")
+    if not python_tag:
+        return False
+    if artifact.get("python_tag") not in {python_tag, "py3", "source"}:
+        return False
+    platform_tag = artifact.get("platform_tag", "")
+    platform = candidate.get("platform")
+    if platform == "windows":
+        return platform_tag.startswith("win") or platform_tag in {"any", "source"}
+    if platform == "linux":
+        return platform_tag.startswith(("linux", "manylinux", "musllinux")) or platform_tag in {"any", "source"}
+    return platform_tag in {"any", "source"}
+
+
+def _record_artifacts(record):
+    artifacts = list(record.get("artifacts") or ())
+    if artifacts:
+        return artifacts
+    python_tags = record.get("python_tags") or ["unknown"]
+    platform_tags = record.get("platform_tags") or ["unknown"]
+    return [
+        {
+            "candidate_id": extension_candidate_id(
+                record.get("extension", "unknown"),
+                record.get("version", "unknown"),
+                python_tag,
+                platform_tag,
+                record.get("source_id", "unknown"),
+                url,
+            ),
+            "filename": url.rsplit("/", 1)[-1],
+            "version": record.get("version"),
+            "python_tag": python_tag,
+            "platform_tag": platform_tag,
+            "url": url,
+        }
+        for url in record.get("artifact_urls") or ()
+        for python_tag in python_tags[:1]
+        for platform_tag in platform_tags[:1]
+    ]
+
+
+def _record_matches(record, candidate):
+    if not candidate.get("platform") or not candidate.get("python_tag"):
+        return False
+    if record.get("rocm_version") and record["rocm_version"] != candidate.get("rocm_version"):
+        return False
+    if _requirement_mismatches(record, candidate):
+        return False
+    gfx_targets = set(record.get("gfx_targets") or ())
+    if gfx_targets and candidate.get("gfx") not in gfx_targets:
+        return False
+    return any(_artifact_matches(artifact, candidate) for artifact in _record_artifacts(record))
+
+
 def _catalog_matches(profile, candidate, extension_catalog):
     if not extension_catalog:
         return (), "not_collected"
@@ -166,26 +298,7 @@ def _catalog_matches(profile, candidate, extension_catalog):
         return (), "not_collected"
     if not candidate.get("platform") or not candidate.get("python_tag"):
         return records, "unknown"
-    matches = []
-    for record in records:
-        python_tags = set(record.get("python_tags") or ())
-        platform_tags = set(record.get("platform_tags") or ())
-        python_match = not candidate.get("python_tag") or candidate["python_tag"] in python_tags or "py3" in python_tags or "source" in python_tags
-        if candidate.get("platform") == "windows":
-            platform_match = not platform_tags or any(tag.startswith("win") or tag in {"any", "source"} for tag in platform_tags)
-        elif candidate.get("platform") == "linux":
-            platform_match = not platform_tags or any(tag.startswith(("linux", "manylinux", "musllinux")) or tag in {"any", "source"} for tag in platform_tags)
-        else:
-            platform_match = True
-        rocm_match = not record.get("rocm_version") or not candidate.get("rocm_version") or record["rocm_version"] == candidate["rocm_version"]
-        torch_constraints = set(record.get("torch_constraints") or ())
-        hip_constraints = set(record.get("hip_constraints") or ())
-        gfx_targets = set(record.get("gfx_targets") or ())
-        torch_match = not torch_constraints or candidate.get("torch_version") in torch_constraints
-        hip_match = not hip_constraints or candidate.get("hip_version") in hip_constraints
-        gfx_match = not gfx_targets or candidate.get("gfx") in gfx_targets
-        if python_match and platform_match and rocm_match and torch_match and hip_match and gfx_match:
-            matches.append(record)
+    matches = [record for record in records if _record_matches(record, candidate)]
     if not matches:
         return records, "incompatible"
     return matches, "matched"
@@ -194,20 +307,26 @@ def _catalog_matches(profile, candidate, extension_catalog):
 def _catalog_details(profile, candidate, extension_catalog):
     records, target_match = _catalog_matches(profile, candidate, extension_catalog)
     versions = sorted({record.get("version") for record in records if record.get("version")}, key=_version_key, reverse=True)
-    latest = records[0] if records else None
-    if latest:
-        latest = max(records, key=lambda record: _version_key(record.get("version")))
+    latest = max(records, key=lambda record: _version_key(record.get("version"))) if records else None
     matching_artifacts = []
-    if latest:
-        for artifact in latest.get("artifacts") or ():
-            if candidate.get("python_tag") and artifact.get("python_tag") not in {candidate["python_tag"], "py3", "source"}:
-                continue
-            platform_tag = artifact.get("platform_tag", "")
-            if candidate.get("platform") == "windows" and not (platform_tag.startswith("win") or platform_tag in {"any", "source"}):
-                continue
-            if candidate.get("platform") == "linux" and not (platform_tag.startswith(("linux", "manylinux", "musllinux")) or platform_tag in {"any", "source"}):
-                continue
-            matching_artifacts.append(artifact)
+    if latest and target_match == "matched":
+        matching_artifacts = [
+            artifact for artifact in _record_artifacts(latest)
+            if _artifact_matches(artifact, candidate)
+        ]
+    matching_candidates = [artifact.get("candidate_id") for artifact in matching_artifacts if artifact.get("candidate_id")]
+    if latest and not matching_candidates:
+        matching_candidates = [
+            extension_candidate_id(
+                latest.get("extension", profile.id),
+                latest.get("version", "unknown"),
+                artifact.get("python_tag", "unknown"),
+                artifact.get("platform_tag", "unknown"),
+                latest.get("source_id", "unknown"),
+                artifact.get("url", ""),
+            )
+            for artifact in matching_artifacts
+        ]
     return {
         "records": records,
         "target_match": target_match,
@@ -215,7 +334,9 @@ def _catalog_details(profile, candidate, extension_catalog):
         "latest_artifact": latest,
         "matching_artifacts": matching_artifacts,
         "matching_sources": [artifact["url"] for artifact in matching_artifacts],
+        "extension_candidate_ids": matching_candidates,
         "evidence_refs": [f"extension:{record['id']}" for record in records if record.get("id")],
+        "dependency_mismatches": _requirement_mismatches(latest or {}, candidate),
     }
 
 
@@ -250,6 +371,9 @@ def _extension_plan_record(profile, document, candidate, installed, extension_ca
         status = "blocked"
         reasons.append("profile has no exact wheel URL or package specification")
     else:
+        if catalog["target_match"] in {"incompatible", "unknown"}:
+            reasons.append(f"Matrix artifact target match is {catalog['target_match']}")
+        reasons.extend(catalog["dependency_mismatches"])
         reasons.extend(_constraint_mismatches(document, constraint, candidate))
         status = "blocked" if reasons else "installable"
     return {
@@ -258,6 +382,8 @@ def _extension_plan_record(profile, document, candidate, installed, extension_ca
         "role": profile.role,
         "status": status,
         "claim_status": claim_status,
+        "candidate_hash": candidate.get("candidate_hash"),
+        "extension_candidate_id": (catalog["extension_candidate_ids"] or [None])[0],
         "matrix_profile_id": document.get("id"),
         "evidence_refs": evidence_refs,
         "installed": [
@@ -269,6 +395,11 @@ def _extension_plan_record(profile, document, candidate, installed, extension_ca
         "target_match": catalog["target_match"],
         "available_versions": catalog["available_versions"],
         "latest_artifact": catalog_latest,
+        "compatibility": {
+            "status": "matched" if not reasons else "blocked",
+            "target_match": catalog["target_match"],
+            "dependency_mismatches": list(catalog["dependency_mismatches"]),
+        },
         "catalog_evidence_refs": catalog["evidence_refs"],
         "reason": "; ".join(reasons) if reasons else "exact source and target constraints match",
     }
@@ -353,6 +484,8 @@ def build_extension_report(inventory, profile_documents=None, candidate=None, ex
                     "matrix_claim_status": claim_status,
                     "matrix_evidence_refs": evidence_refs,
                     "core_required": core_required,
+                    "candidate_hash": (candidate or {}).get("candidate_hash"),
+                    "extension_candidate_id": (catalog["extension_candidate_ids"] or [None])[0],
                     "installed": [],
                     "reason": "package is not installed in the target environment",
                     "install_policy": profile.install_policy,
@@ -361,6 +494,10 @@ def build_extension_report(inventory, profile_documents=None, candidate=None, ex
                     "available_versions": catalog["available_versions"],
                     "latest_artifact": catalog["latest_artifact"],
                     "catalog_evidence_refs": catalog["evidence_refs"],
+                    "compatibility": {
+                        "status": catalog["target_match"],
+                        "dependency_mismatches": list(catalog["dependency_mismatches"]),
+                    },
                 }
             )
             continue
@@ -382,6 +519,8 @@ def build_extension_report(inventory, profile_documents=None, candidate=None, ex
                 "matrix_claim_status": claim_status,
                 "matrix_evidence_refs": evidence_refs,
                 "core_required": core_required,
+                "candidate_hash": (candidate or {}).get("candidate_hash"),
+                "extension_candidate_id": (catalog["extension_candidate_ids"] or [None])[0],
                 "installed": [
                     {"name": package["name"], "version": package["version"]}
                     for package in installed
@@ -393,6 +532,10 @@ def build_extension_report(inventory, profile_documents=None, candidate=None, ex
                 "available_versions": catalog["available_versions"],
                 "latest_artifact": catalog["latest_artifact"],
                 "catalog_evidence_refs": catalog["evidence_refs"],
+                "compatibility": {
+                    "status": catalog["target_match"],
+                    "dependency_mismatches": list(catalog["dependency_mismatches"]),
+                },
             }
         )
     return {

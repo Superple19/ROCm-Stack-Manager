@@ -9,12 +9,14 @@ from ..core.adapter import (
     CapabilityUnavailable,
     ExtensionInstaller,
     ExtensionProvider,
+    ExtensionVerifier,
     HardwareProvider,
     PythonPackageAdapter,
 )
 from ..core.backup import create_backup, load_backup, load_extension_backup
 from ..core.catalog import ensure_catalog, iter_candidates, load_catalog
 from ..core.hardware import detected_gfx_targets, hardware_from_devices, probe_hardware
+from ..core.extension_resolver import run_extension_resolver
 from ..core.install import (
     InstallResult,
     apply_extension_restore,
@@ -197,6 +199,25 @@ class ManagerService:
         profiles = (self.catalog or {}).get("_comfyui_extension_profiles", {})
         extension_catalog = (self.catalog or {}).get("_extension_catalog", {})
         return self.adapter.extension_inventory(self.target, candidate, profiles, extension_catalog)
+
+    def extension_resolve(self, candidate, selections=()):
+        self._require_target()
+        plan = self.extension_plan(candidate, selections)
+        return run_extension_resolver(self.target, candidate, plan.extensions)
+
+    def extension_verify(self, candidate, selections=()):
+        self._require_target()
+        if not isinstance(self.adapter, ExtensionVerifier):
+            raise CapabilityUnavailable(f"adapter {self.adapter.id} has no extension verification capability")
+        profiles = (self.catalog or {}).get("_comfyui_extension_profiles", {})
+        extension_catalog = (self.catalog or {}).get("_extension_catalog", {})
+        return self.adapter.extension_verify(
+            self.target,
+            candidate,
+            tuple(selections),
+            profiles,
+            extension_catalog,
+        )
 
     def apply_extensions(self, plan, backup_dir=None):
         self._require_target()

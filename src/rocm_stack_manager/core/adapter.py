@@ -93,3 +93,18 @@ class ExtensionInstaller(Protocol):
 
     def restore_extensions(self, target: Any, backup_path, apply=False) -> Any:
         ...
+
+
+@runtime_checkable
+class ExtensionVerifier(Protocol):
+    """Optional capability for target-local extension verification export."""
+
+    def extension_verify(
+        self,
+        target: Any,
+        candidate: dict,
+        selections: tuple[str, ...] = (),
+        profile_documents: dict | None = None,
+        extension_catalog: dict | None = None,
+    ) -> dict:
+        ...

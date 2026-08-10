@@ -5,11 +5,13 @@ from ...core.backup import create_extension_backup, load_extension_backup
 from ...core.inventory import collect_inventory
 from ...core.install import apply_extension_restore, build_extension_restore_plan
 from ...core.hardware import probe_hardware
+from ...core.extension_verification import build_extension_verification
 from ...core.launch import LaunchOptions, LaunchPlan
 from ...core.planning import build_plan
 from ...core.verify import probe_target, target_python_tag
 from .detect import detect_comfyui
 from .extensions import (
+    PROFILES,
     apply_extension_plan,
     build_extension_plan,
     build_extension_report,
@@ -60,6 +62,20 @@ class ComfyUIAdapter:
             profile_documents,
             selections,
             extension_catalog,
+        )
+
+    def extension_verify(self, target, candidate, selections=(), profile_documents=None, extension_catalog=None):
+        plan = self.extension_plan(target, candidate, selections, profile_documents, extension_catalog)
+        runtime = self.verify(target)
+        hardware = self.hardware(target)
+        import_names = {profile.id: profile.import_names for profile in PROFILES}
+        return build_extension_verification(
+            target,
+            candidate,
+            plan.extensions,
+            import_names,
+            runtime,
+            hardware,
         )
 
     def create_extension_backup(self, target, plan, destination=None):

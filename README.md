@@ -42,6 +42,15 @@ python -m rocm_stack_manager extensions `
 python -m rocm_stack_manager extensions plan `
   --target C:\path\to\comfyui-portable `
   --candidate <candidate-id>
+python -m rocm_stack_manager extensions resolve `
+  --target C:\path\to\comfyui-portable `
+  --catalog C:\path\to\rocm-evidence-matrix\data\catalog.json `
+  --candidate <candidate-id> --extension bitsandbytes
+python -m rocm_stack_manager extensions verify `
+  --target C:\path\to\comfyui-portable `
+  --catalog C:\path\to\rocm-evidence-matrix\data\catalog.json `
+  --candidate <candidate-id> --extension bitsandbytes `
+  --output .rocm-stack-manager\evidence\bitsandbytes.json
 python -m rocm_stack_manager extensions apply `
   --target C:\path\to\comfyui-portable `
   --candidate <candidate-id> --extension <extension-id> --apply
@@ -117,6 +126,14 @@ extension installation plan. It emits commands only when the Matrix profile
 contains an exact source, evidence reference, artifact claim, and matching
 platform/Python/GFX/ABI constraints. The current extension profiles are
 unverified and therefore remain blocked from installation.
+`extensions resolve` runs a targeted `pip --dry-run` for only the selected
+core candidate and extension artifacts. It records the exact core candidate
+hash and extension candidate ID, never installs packages, and does not test
+all historical combinations. `extensions verify` runs selected extension
+imports and a small target-local GPU tensor smoke test when the target runtime
+and hardware are detected. It writes a user-reviewable evidence JSON with
+runtime and hardware details; the export is explicitly not promoted to Matrix
+compatibility evidence automatically.
 `extensions apply` requires both the `apply` action and `--apply`; it creates
 an extension-only backup before running any command. If any selected
 extension is blocked, unverified, conflicting, or missing evidence, the whole
