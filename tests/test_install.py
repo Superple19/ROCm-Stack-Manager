@@ -1,9 +1,11 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from rocm_stack_manager.core.detection import detect_target
-from rocm_stack_manager.core.install import InstallationError, build_install_plan, dry_run_install
+from rocm_stack_manager.core.backup import BackupSnapshot
+from rocm_stack_manager.core.install import InstallationError, apply_install, build_install_plan, dry_run_install
 
 
 class InstallPlanTests(unittest.TestCase):
@@ -30,7 +32,7 @@ class InstallPlanTests(unittest.TestCase):
         self.assertFalse(result.applied)
         self.assertIn("--no-input", result.plan.command)
         self.assertIn("resolver evidence is failed", result.plan.warnings[0])
-        self.assertIn("--allow-unverified", result.plan.warnings[-1])
+        self.assertTrue(any("--allow-unverified" in warning for warning in result.plan.warnings))
 
     def test_current_candidate_uses_target_python_and_index(self):
         candidate = {
@@ -58,3 +60,39 @@ class InstallPlanTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(InstallationError):
                 build_install_plan(self._target(Path(directory)), candidate)
+
+    def test_apply_removes_stale_managed_packages_before_install(self):
+        candidate = {
+            "id": "legacy:stable:7.2.1",
+            "artifact_available": True,
+            "python_compatibility": "compatible",
+            "wheel_urls": [
+                "https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/rocm-7.2.1.tar.gz",
+                "https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/torch-2.9.1%2Brocm7.2.1-cp312-cp312-win_amd64.whl",
+            ],
+        }
+        completed = type("Completed", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+        inventory = type(
+            "Inventory",
+            (),
+            {
+                "status": "detected",
+                "packages": (
+                    {"name": "rocm", "version": "10.1.0"},
+                    {"name": "torch", "version": "2.14.0"},
+                    {"name": "amd-torch-device-gfx1201", "version": "2.14.0"},
+                ),
+            },
+        )()
+        with tempfile.TemporaryDirectory() as directory:
+            target = self._target(Path(directory))
+            backup = BackupSnapshot(Path(directory) / "backup.json", Path(directory) / "requirements.txt", "", ())
+            with patch("rocm_stack_manager.core.install.collect_inventory", return_value=inventory):
+                with patch("rocm_stack_manager.core.install.subprocess.run", return_value=completed) as run:
+                    result = apply_install(target, candidate, backup)
+
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(run.call_args_list[0].args[0][3], "uninstall")
+        self.assertIn("amd-torch-device-gfx1201", run.call_args_list[0].args[0])
+        self.assertEqual(run.call_args_list[1].args[0][3], "install")
+        self.assertIn("Removed stale packages", result.output)

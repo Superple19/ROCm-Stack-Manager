@@ -127,6 +127,36 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(candidates[0]["python_compatibility"], "compatible")
         self.assertEqual(candidates[0]["wheel_urls"], ["https://example.test/torch.whl"])
 
+    def test_adds_legacy_rocm_source_artifact(self):
+        catalog = _matrix()
+        catalog["_historical_candidates"] = [
+            {
+                "id": "legacy:stable:7.2.1:gfx1201",
+                "distribution_family": "legacy",
+                "platform": "windows",
+                "channel": "stable",
+                "rocm_version": "7.2.1",
+                "torch_version": "2.9.1+rocm7.2.1",
+                "torchvision_version": "0.24.1+rocm7.2.1",
+                "python_tags": ["cp312"],
+                "available_gfx_targets": ["gfx1201"],
+                "artifact_available": True,
+                "wheel_urls": [
+                    "https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/torch-2.9.1%2Brocm7.2.1-cp312-cp312-win_amd64.whl"
+                ],
+            }
+        ]
+
+        candidate = iter_candidates(
+            catalog,
+            platform="windows",
+            gfx="gfx1201",
+            rocm_version="7.2.1",
+            python_tag="cp312",
+        )[0]
+
+        self.assertEqual(candidate["wheel_urls"][0], "https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/rocm-7.2.1.tar.gz")
+
     def test_plan_rejects_unavailable_candidate(self):
         candidate = iter_candidates(
             _matrix(), platform="windows", gfx="gfx1201", include_unavailable=True, channel="nightly"

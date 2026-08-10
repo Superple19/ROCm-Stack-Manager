@@ -3,14 +3,75 @@
 from dataclasses import dataclass
 from pathlib import Path
 import subprocess
+import re
+from urllib.parse import unquote, urlparse
 
 from .backup import BackupSnapshot
+from .inventory import collect_inventory
 from .planning import InstallPlan, PlanningError
 from .verify import _clean_environment
 
 
 class InstallationError(PlanningError):
     """Raised when a candidate cannot produce a safe install plan."""
+
+
+_MANAGED_EXACT_NAMES = {
+    "rocm",
+    "rocm-sdk-core",
+    "rocm-sdk-devel",
+    "rocm-sdk-libraries",
+    "rocm-sdk-libraries-custom",
+    "torch",
+    "torchvision",
+    "torchaudio",
+}
+
+
+def _normalize_package_name(name):
+    return str(name).casefold().replace("_", "-")
+
+
+def _is_managed_package(name):
+    normalized = _normalize_package_name(name)
+    return (
+        normalized in _MANAGED_EXACT_NAMES
+        or normalized.startswith("rocm-sdk-device-")
+        or normalized.startswith("amd-torch-device-")
+        or normalized.startswith("amd-torchvision-device-")
+    )
+
+
+def _package_name_from_requirement(requirement):
+    value = unquote(str(requirement)).split("#", 1)[0]
+    if "://" in value:
+        value = urlparse(value).path.rsplit("/", 1)[-1]
+    value = re.sub(r"\.(?:whl|tar\.gz|zip)$", "", value, flags=re.IGNORECASE)
+    match = re.match(r"^(.+?)-\d", value)
+    return _normalize_package_name(match.group(1) if match else value.split("==", 1)[0])
+
+
+def _candidate_managed_packages(candidate):
+    requirements = tuple(candidate.get("wheel_urls") or ()) + tuple(candidate.get("package_specs") or ())
+    return {
+        _package_name_from_requirement(requirement)
+        for requirement in requirements
+        if _is_managed_package(_package_name_from_requirement(requirement))
+    }
+
+
+def _stale_managed_packages(target, candidate):
+    inventory = collect_inventory(target, candidate)
+    if inventory.status != "detected":
+        return ()
+    desired = _candidate_managed_packages(candidate)
+    stale = {
+        package["name"]
+        for package in inventory.packages
+        if _is_managed_package(package.get("name", ""))
+        and _normalize_package_name(package["name"]) not in desired
+    }
+    return tuple(sorted(stale, key=str.casefold))
 
 
 @dataclass(frozen=True)
@@ -54,6 +115,7 @@ def build_install_plan(target, candidate, *, allow_unverified=False):
         warnings.append("Python ABI compatibility is unknown")
     if resolver_status == "resolver_failed" and not allow_unverified:
         warnings.append("apply would require --allow-unverified")
+    warnings.append("apply removes stale managed ROCm/Torch packages before install")
 
     python = target.python_executable
     if python is None:
@@ -92,6 +154,37 @@ def apply_install(target, candidate, backup, *, allow_unverified=False, timeout=
     plan = build_install_plan(target, candidate, allow_unverified=allow_unverified)
     if candidate.get("resolver_status") == "resolver_failed" and not allow_unverified:
         raise InstallationError("resolver evidence failed; pass --allow-unverified to apply")
+    stale_packages = _stale_managed_packages(target, candidate)
+    output_prefix = ""
+    if stale_packages:
+        cleanup_command = [str(target.python_executable), "-m", "pip", "uninstall", "--yes", *stale_packages]
+        try:
+            cleanup = subprocess.run(
+                cleanup_command,
+                cwd=str(target.comfyui_dir),
+                env=_clean_environment(target),
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=timeout,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            return InstallResult(
+                plan=plan,
+                applied=True,
+                backup_path=str(backup.path),
+                output=f"stale package cleanup failed: {type(error).__name__}: {error}",
+            )
+        cleanup_output = (cleanup.stdout or "") + (cleanup.stderr or "")
+        if cleanup.returncode != 0:
+            return InstallResult(
+                plan=plan,
+                applied=True,
+                returncode=cleanup.returncode,
+                backup_path=str(backup.path),
+                output=f"stale package cleanup failed:\n{cleanup_output}",
+            )
+        output_prefix = f"Removed stale packages: {', '.join(stale_packages)}\n"
     try:
         completed = subprocess.run(
             list(plan.command),
@@ -107,9 +200,9 @@ def apply_install(target, candidate, backup, *, allow_unverified=False, timeout=
             plan=plan,
             applied=True,
             backup_path=str(backup.path),
-            output=f"{type(error).__name__}: {error}",
+            output=output_prefix + f"{type(error).__name__}: {error}",
         )
-    output = (completed.stdout or "") + (completed.stderr or "")
+    output = output_prefix + (completed.stdout or "") + (completed.stderr or "")
     return InstallResult(
         plan=plan,
         applied=True,

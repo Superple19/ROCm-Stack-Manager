@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from urllib.parse import unquote
 
 
 class CatalogError(ValueError):
@@ -161,13 +162,27 @@ def _historical_candidate(candidate, gfx, python_tag):
         python_compatibility = "compatible" if python_tag in python_tags else "incompatible"
     artifact_available = bool(candidate.get("artifact_available"))
     evidence_status = candidate.get("evidence_status") or {}
+    wheel_urls = list(candidate.get("wheel_urls") or [])
+    rocm_version = candidate.get("rocm_version")
+    if candidate.get("distribution_family", "legacy") == "legacy" and rocm_version:
+        marker = f"/rocm-rel-{rocm_version}/"
+        source_url = next(
+            (
+                url.rsplit("/", 1)[0] + f"/rocm-{rocm_version}.tar.gz"
+                for url in wheel_urls
+                if marker in unquote(url)
+            ),
+            None,
+        )
+        if source_url and source_url not in wheel_urls:
+            wheel_urls.insert(0, source_url)
     return {
         "id": candidate.get("id"),
         "distribution_family": candidate.get("distribution_family", "legacy"),
         "platform": candidate.get("platform"),
         "channel": candidate.get("channel"),
         "gfx": gfx,
-        "rocm_version": candidate.get("rocm_version"),
+        "rocm_version": rocm_version,
         "torch_version": candidate.get("torch_version"),
         "torchvision_version": candidate.get("torchvision_version"),
         "torchaudio_version": candidate.get("torchaudio_version"),
@@ -178,7 +193,7 @@ def _historical_candidate(candidate, gfx, python_tag):
         "python_tag": python_tag,
         "python_compatibility": python_compatibility,
         "resolver_status": evidence_status.get("resolver", "not_collected"),
-        "wheel_urls": list(candidate.get("wheel_urls") or []),
+        "wheel_urls": wheel_urls,
         "package_specs": [],
     }
 
