@@ -21,6 +21,10 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 .\.venv\Scripts\python.exe -m rocm_stack_manager --help
 .\.venv\Scripts\rocm-stack-manager.exe --help
+.\.venv\Scripts\python.exe -m pip install --editable ".[ui]"
+.\.venv\Scripts\rocm-stack-manager-gui.exe
+# Or use the repository launcher:
+.\run-rocm-stack-manager.bat
 ```
 
 After activation, the examples below can use `python -m rocm_stack_manager`.
@@ -131,6 +135,18 @@ and is dry-run by default. It reinstalls recorded versions with
 The `verify` command executes only the selected target's Python interpreter. It
 does not call a globally installed ROCm executable; host GPU state is reported
 separately from target-local Torch, HIP, and ROCm package metadata.
+
+The optional PySide6 interface is a read-only inspection layer over the same
+core services. It supports target detection, Matrix catalog loading, candidate
+filtering, inventory, runtime verification, and core/extension dry-runs. It
+Core package apply and package/extension restore require a completed dry-run,
+target-local backup, and explicit confirmation. Extension apply remains
+disabled unless every selected extension has exact Matrix source and evidence.
+
+On Linux, create the venv with `python3 -m venv .venv`, install the optional UI
+with `.venv/bin/python -m pip install --editable '.[ui]'`, and run
+`./run-rocm-stack-manager.sh`. The launcher resolves its own repository root,
+uses only the local `.venv`, and passes additional arguments to the UI.
 
 ## Repository layout
 
