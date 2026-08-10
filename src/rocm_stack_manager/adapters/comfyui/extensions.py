@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 import subprocess
 from urllib.parse import urlparse
 
@@ -145,11 +146,88 @@ def _constraint_mismatches(document, constraint, candidate):
     return mismatches
 
 
-def _extension_plan_record(profile, document, candidate, installed):
+def _version_key(value):
+    parts = []
+    for token in re.split(r"[^0-9]+", str(value or "")):
+        parts.append((0, int(token)) if token else (1, 0))
+    return tuple(parts)
+
+
+def _catalog_matches(profile, candidate, extension_catalog):
+    if not extension_catalog:
+        return (), "not_collected"
+    records = [
+        record
+        for record in extension_catalog.get("extensions", [])
+        if record.get("extension") == profile.id
+        or _normalize(record.get("package_name", "")) in {_normalize(value) for value in profile.package_names}
+    ]
+    if not records:
+        return (), "not_collected"
+    if not candidate.get("platform") or not candidate.get("python_tag"):
+        return records, "unknown"
+    matches = []
+    for record in records:
+        python_tags = set(record.get("python_tags") or ())
+        platform_tags = set(record.get("platform_tags") or ())
+        python_match = not candidate.get("python_tag") or candidate["python_tag"] in python_tags or "py3" in python_tags or "source" in python_tags
+        if candidate.get("platform") == "windows":
+            platform_match = not platform_tags or any(tag.startswith("win") or tag in {"any", "source"} for tag in platform_tags)
+        elif candidate.get("platform") == "linux":
+            platform_match = not platform_tags or any(tag.startswith(("linux", "manylinux", "musllinux")) or tag in {"any", "source"} for tag in platform_tags)
+        else:
+            platform_match = True
+        rocm_match = not record.get("rocm_version") or not candidate.get("rocm_version") or record["rocm_version"] == candidate["rocm_version"]
+        torch_constraints = set(record.get("torch_constraints") or ())
+        hip_constraints = set(record.get("hip_constraints") or ())
+        gfx_targets = set(record.get("gfx_targets") or ())
+        torch_match = not torch_constraints or candidate.get("torch_version") in torch_constraints
+        hip_match = not hip_constraints or candidate.get("hip_version") in hip_constraints
+        gfx_match = not gfx_targets or candidate.get("gfx") in gfx_targets
+        if python_match and platform_match and rocm_match and torch_match and hip_match and gfx_match:
+            matches.append(record)
+    if not matches:
+        return records, "incompatible"
+    return matches, "matched"
+
+
+def _catalog_details(profile, candidate, extension_catalog):
+    records, target_match = _catalog_matches(profile, candidate, extension_catalog)
+    versions = sorted({record.get("version") for record in records if record.get("version")}, key=_version_key, reverse=True)
+    latest = records[0] if records else None
+    if latest:
+        latest = max(records, key=lambda record: _version_key(record.get("version")))
+    matching_artifacts = []
+    if latest:
+        for artifact in latest.get("artifacts") or ():
+            if candidate.get("python_tag") and artifact.get("python_tag") not in {candidate["python_tag"], "py3", "source"}:
+                continue
+            platform_tag = artifact.get("platform_tag", "")
+            if candidate.get("platform") == "windows" and not (platform_tag.startswith("win") or platform_tag in {"any", "source"}):
+                continue
+            if candidate.get("platform") == "linux" and not (platform_tag.startswith(("linux", "manylinux", "musllinux")) or platform_tag in {"any", "source"}):
+                continue
+            matching_artifacts.append(artifact)
+    return {
+        "records": records,
+        "target_match": target_match,
+        "available_versions": versions,
+        "latest_artifact": latest,
+        "matching_artifacts": matching_artifacts,
+        "matching_sources": [artifact["url"] for artifact in matching_artifacts],
+        "evidence_refs": [f"extension:{record['id']}" for record in records if record.get("id")],
+    }
+
+
+def _extension_plan_record(profile, document, candidate, installed, extension_catalog=None):
     constraint = _matrix_constraint(document)
     claim_status = _claim_status(document, constraint)
     evidence_refs = _evidence_refs(document, constraint)
     sources = _exact_sources(document, constraint)
+    catalog = _catalog_details(profile, candidate, extension_catalog)
+    catalog_latest = catalog["latest_artifact"]
+    if not sources and evidence_refs and catalog["target_match"] == "matched" and catalog_latest:
+        sources = tuple(catalog["matching_sources"])
     reasons = []
     if installed and any(package.get("status") == "conflict" for package in installed):
         status = "conflict"
@@ -188,6 +266,10 @@ def _extension_plan_record(profile, document, candidate, installed):
         ],
         "already_installed": bool(installed),
         "sources": list(sources),
+        "target_match": catalog["target_match"],
+        "available_versions": catalog["available_versions"],
+        "latest_artifact": catalog_latest,
+        "catalog_evidence_refs": catalog["evidence_refs"],
         "reason": "; ".join(reasons) if reasons else "exact source and target constraints match",
     }
 
@@ -237,7 +319,7 @@ class ExtensionInstallResult:
         return values
 
 
-def build_extension_report(inventory, profile_documents=None, candidate=None):
+def build_extension_report(inventory, profile_documents=None, candidate=None, extension_catalog=None):
     """Classify known extensions using only target-local package evidence.
 
     A compiled extension is never promoted to compatible without a matching
@@ -258,6 +340,7 @@ def build_extension_report(inventory, profile_documents=None, candidate=None):
         evidence_refs = list(matrix_profile.get("evidence_refs") or [])
         core_required = bool(metadata.get("core_required", False))
         installed = tuple(package for package in inventory.packages if _matches(profile, package))
+        catalog = _catalog_details(profile, candidate or {}, extension_catalog)
         if not installed:
             records.append(
                 {
@@ -274,6 +357,10 @@ def build_extension_report(inventory, profile_documents=None, candidate=None):
                     "reason": "package is not installed in the target environment",
                     "install_policy": profile.install_policy,
                     "evidence_refs": [],
+                    "target_match": catalog["target_match"],
+                    "available_versions": catalog["available_versions"],
+                    "latest_artifact": catalog["latest_artifact"],
+                    "catalog_evidence_refs": catalog["evidence_refs"],
                 }
             )
             continue
@@ -302,6 +389,10 @@ def build_extension_report(inventory, profile_documents=None, candidate=None):
                 "reason": reason,
                 "install_policy": profile.install_policy,
                 "evidence_refs": [],
+                "target_match": catalog["target_match"],
+                "available_versions": catalog["available_versions"],
+                "latest_artifact": catalog["latest_artifact"],
+                "catalog_evidence_refs": catalog["evidence_refs"],
             }
         )
     return {
@@ -320,6 +411,7 @@ def build_extension_plan(
     candidate,
     profile_documents=None,
     selections=(),
+    extension_catalog=None,
 ):
     """Build a read-only, evidence-gated extension installation plan."""
 
@@ -341,7 +433,7 @@ def build_extension_plan(
             continue
         document = profile_documents.get(profile.id) or {}
         installed = tuple(package for package in inventory.packages if _matches(profile, package))
-        record = _extension_plan_record(profile, document, candidate, installed)
+        record = _extension_plan_record(profile, document, candidate, installed, extension_catalog)
         records.append(record)
         if record["status"] == "installable" and not record["already_installed"]:
             command = [str(target.python_executable), "-m", "pip", "install", "--no-input"]

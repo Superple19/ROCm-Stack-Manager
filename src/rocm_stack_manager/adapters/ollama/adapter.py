@@ -1,6 +1,7 @@
 """Ollama adapter scaffold."""
 
 from ...core.adapter import CapabilityUnavailable
+from ...core.hardware import probe_hardware
 from ...core.launch import LaunchOptions, LaunchPlan
 
 
@@ -23,6 +24,9 @@ class OllamaAdapter:
 
     def verify(self, target):
         self._unimplemented()
+
+    def hardware(self, target):
+        return probe_hardware(target)
 
     def launch(self, target, options: LaunchOptions) -> LaunchPlan:
         self._unimplemented()

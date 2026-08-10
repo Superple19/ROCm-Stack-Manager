@@ -13,6 +13,29 @@ from rocm_stack_manager.core.inventory import PackageInventory
 
 
 class ExtensionReportTests(unittest.TestCase):
+    def test_catalog_artifacts_are_reported_with_target_match(self):
+        inventory = PackageInventory(Path("C:/target"), None, (), "detected")
+        catalog = {
+            "extensions": [{
+                "id": "extension:bitsandbytes:0.48.2",
+                "extension": "bitsandbytes",
+                "package_name": "bitsandbytes",
+                "version": "0.48.2",
+                "python_tags": ["cp312"],
+                "platform_tags": ["win_amd64"],
+                "artifact_urls": ["https://example.test/bitsandbytes.whl"],
+            }]
+        }
+        report = build_extension_report(
+            inventory,
+            candidate={"platform": "windows", "python_tag": "cp312", "rocm_version": "10.1.0"},
+            extension_catalog=catalog,
+        )
+        bitsandbytes = next(item for item in report["extensions"] if item["id"] == "bitsandbytes")
+        self.assertEqual(bitsandbytes["target_match"], "matched")
+        self.assertEqual(bitsandbytes["available_versions"], ["0.48.2"])
+        self.assertEqual(bitsandbytes["latest_artifact"]["version"], "0.48.2")
+
     def test_compiled_extensions_remain_unknown(self):
         inventory = PackageInventory(
             Path("C:/target"),

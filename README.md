@@ -106,9 +106,12 @@ The `inventory` command reads installed distributions from the selected target
 Python and classifies them against one candidate. Compiled extensions without
 matching evidence remain `unknown`; they are never assumed compatible.
 The `extensions` command reports known ComfyUI extensions from local inventory
-only. With `--catalog`, it also displays the Matrix extension profile and its
-claim/evidence status. It does not contact package hosts, install extensions,
-or treat an installed extension as compatible without ABI/runtime evidence.
+and, when available, Matrix-observed artifact versions and target wheel-tag
+matches. With `--catalog`, it also displays the Matrix extension profile and
+its claim/evidence status. It does not contact package hosts, install
+extensions, or treat an installed extension as compatible without ABI/runtime
+evidence. `not_collected`, `artifact_available`, and compatibility evidence
+remain separate states.
 `extensions plan` adds the selected core candidate and produces a read-only
 extension installation plan. It emits commands only when the Matrix profile
 contains an exact source, evidence reference, artifact claim, and matching
@@ -136,12 +139,28 @@ The `verify` command executes only the selected target's Python interpreter. It
 does not call a globally installed ROCm executable; host GPU state is reported
 separately from target-local Torch, HIP, and ROCm package metadata.
 
-The optional PySide6 interface is a read-only inspection layer over the same
-core services. It supports target detection, Matrix catalog loading, candidate
-filtering, inventory, runtime verification, and core/extension dry-runs. It
-Core package apply and package/extension restore require a completed dry-run,
+The optional PySide6 interface is an inspection and safety-gated operation
+layer over the same core services. It supports target detection, Matrix
+catalog loading, candidate filtering, inventory, runtime verification, and
+core/extension dry-runs. Candidate filters include distribution family,
+current/historical lifecycle, channel, ROCm version, and candidate state. The
+table shows the exact candidate ID so historical artifact records are not
+silently collapsed into one row per channel. Core package apply and
+package/extension restore require a completed dry-run,
 target-local backup, and explicit confirmation. Extension apply remains
 disabled unless every selected extension has exact Matrix source and evidence.
+After target detection, the UI also runs a local ComfyUI extension inventory
+without network access. Installed extensions are shown separately from Matrix
+claim status; an installed extension with missing ABI evidence remains
+`unknown` and cannot produce an install command.
+When the UI starts, it performs a host-scoped `hipInfo`/`rocminfo` probe when
+one is available and shows the result as a provisional GFX hint. This does not
+claim that a candidate is compatible. After target detection, the UI probes
+the target Python and target-local tools and replaces the hint with target
+runtime evidence. Multiple detected GFX targets remain a manual selection; no
+GFX value is inferred from a GPU name or hardcoded into the interface. The
+shared hardware layer can also use target-local or explicitly available
+`hipInfo`/`rocminfo` tools for native runtimes such as Ollama.
 
 On Linux, create the venv with `python3 -m venv .venv`, install the optional UI
 with `.venv/bin/python -m pip install --editable '.[ui]'`, and run
@@ -156,6 +175,7 @@ rocm-stack-manager/
 │  └─ rocm_stack_manager/
 │     ├─ core/
 │     │  ├─ catalog.py
+│     │  ├─ hardware.py
 │     │  ├─ detection.py
 │     │  ├─ planning.py
 │     │  ├─ install.py

@@ -13,8 +13,9 @@ if PY_SIDE_AVAILABLE:
     from PySide6 import QtWidgets
 
     from rocm_stack_manager.core.detection import TargetLayout
+    from rocm_stack_manager.core.verify import RuntimeObservation
     from rocm_stack_manager.ui.main_window import MainWindow
-    from rocm_stack_manager.ui.services import ManagerService
+    from rocm_stack_manager.ui.services import ManagerService, detected_gfx_targets
 
 
 @unittest.skipUnless(PY_SIDE_AVAILABLE, "PySide6 optional dependency is not installed")
@@ -88,6 +89,42 @@ class UiTests(unittest.TestCase):
             self.assertFalse(window.apply_extension_button.isEnabled())
             window.close()
 
+    def test_candidate_summary_includes_lifecycle_and_state_counts(self):
+        window = MainWindow()
+        window._display_candidates(
+            [
+                {"lifecycle": "current", "candidate_kind": "installable"},
+                {"lifecycle": "historical", "candidate_kind": "artifact_only"},
+            ]
+        )
+        self.assertIn("2 total", window.candidate_summary.text())
+        self.assertIn("current 1", window.candidate_summary.text())
+        self.assertIn("historical 1", window.candidate_summary.text())
+        self.assertIn("installable 1", window.candidate_summary.text())
+        window.close()
+
+    def test_extension_inventory_is_rendered_separately(self):
+        window = MainWindow()
+        window._display_extension_inventory(
+            {
+                "status": "detected",
+                "extensions": [
+                    {
+                        "id": "bitsandbytes",
+                        "name": "bitsandbytes",
+                        "status": "unknown",
+                        "installed": [{"name": "bitsandbytes", "version": "0.46.1"}],
+                        "matrix_claim_status": "unverified",
+                        "reason": "missing ABI evidence",
+                    }
+                ],
+            }
+        )
+        self.assertEqual(window.extension_table.rowCount(), 1)
+        self.assertEqual(window.extension_table.item(0, 1).text(), "unknown")
+        self.assertIn("1 known extensions", window.extension_summary.text())
+        window.close()
+
     def test_service_loads_explicit_local_catalog_without_network(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -102,8 +139,114 @@ class UiTests(unittest.TestCase):
                 }),
                 encoding="utf-8",
             )
+            (root / "source-manifest.json").write_text(
+                json.dumps(
+                    {
+                        "fetched_at": "2026-08-11T00:00:00Z",
+                        "catalog_sha256": "abc123",
+                        "artifact_count": 4,
+                    }
+                ),
+                encoding="utf-8",
+            )
             service = ManagerService()
             loaded, state = service.load_catalog(catalog)
             self.assertEqual(loaded["targets"], [])
             self.assertEqual(state.path, catalog.resolve())
             self.assertEqual(state.source, "local file")
+            self.assertEqual(state.fetched_at, "2026-08-11T00:00:00Z")
+            self.assertEqual(state.artifact_count, 4)
+
+    def test_extracts_unique_normalized_gfx_targets(self):
+        observation = RuntimeObservation(
+            target_root=Path("target"),
+            python_executable=None,
+            host_platform="windows",
+            runtime_status="detected",
+            hardware_status="detected",
+            devices=(
+                {"gfx": "gfx1201:sramecc+"},
+                {"gfx": "GFX1201"},
+                {"gfx": "gfx1100"},
+            ),
+        )
+        self.assertEqual(detected_gfx_targets(observation), ("gfx1201", "gfx1100"))
+
+    def test_runtime_probe_populates_single_gfx(self):
+        window = MainWindow()
+        observation = RuntimeObservation(
+            target_root=Path("target"),
+            python_executable=None,
+            host_platform="windows",
+            runtime_status="detected",
+            hardware_status="detected",
+            devices=({"gfx": "gfx1201"},),
+        )
+        window._display_runtime(observation)
+        self.assertEqual(window.gfx_edit.currentText(), "gfx1201")
+        self.assertEqual(window.gfx_edit.count(), 1)
+        self.assertIn("gfx1201", window.gfx_status.text())
+        window.close()
+
+    def test_host_probe_is_marked_provisional(self):
+        window = MainWindow()
+        from rocm_stack_manager.core.hardware import HardwareObservation
+
+        window._display_host_hardware(
+            HardwareObservation(
+                scope="host",
+                host_platform="windows",
+                status="detected",
+                gfx_targets=("gfx1201",),
+            )
+        )
+        self.assertEqual(window.gfx_edit.currentText(), "gfx1201")
+        self.assertIn("Host detected", window.gfx_status.text())
+        window._display_runtime(
+            RuntimeObservation(
+                target_root=Path("target"),
+                python_executable=None,
+                host_platform="windows",
+                runtime_status="detected",
+                hardware_status="detected",
+                devices=({"gfx": "gfx1201"},),
+            ),
+            append=False,
+        )
+        self.assertIn("Target runtime", window.gfx_status.text())
+        window.close()
+
+    def test_runtime_probe_keeps_multiple_gfx_unselected(self):
+        window = MainWindow()
+        observation = RuntimeObservation(
+            target_root=Path("target"),
+            python_executable=None,
+            host_platform="linux",
+            runtime_status="detected",
+            hardware_status="detected",
+            devices=({"gfx": "gfx1201"}, {"gfx": "gfx1100"}),
+        )
+        window._display_runtime(observation)
+        self.assertEqual(window.gfx_edit.currentText(), "")
+        self.assertEqual(
+            [window.gfx_edit.itemText(index) for index in range(window.gfx_edit.count())],
+            ["gfx1201", "gfx1100"],
+        )
+        self.assertIn("2 GFX", window.gfx_status.text())
+        window.close()
+
+    def test_runtime_probe_allows_manual_gfx_when_missing(self):
+        window = MainWindow()
+        observation = RuntimeObservation(
+            target_root=Path("target"),
+            python_executable=None,
+            host_platform="windows",
+            runtime_status="not_detected",
+            hardware_status="not_detected",
+            devices=(),
+        )
+        window._display_runtime(observation)
+        window.gfx_edit.setEditText("gfx900")
+        self.assertEqual(window.gfx_edit.currentText(), "gfx900")
+        self.assertIn("manual", window.gfx_status.text())
+        window.close()

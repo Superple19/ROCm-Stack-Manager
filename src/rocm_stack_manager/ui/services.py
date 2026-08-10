@@ -1,12 +1,20 @@
 """Presentation-facing services for the optional Manager UI."""
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
 
 from ..adapters.registry import get_adapter
-from ..core.adapter import ExtensionInstaller, ExtensionProvider, PythonPackageAdapter
+from ..core.adapter import (
+    CapabilityUnavailable,
+    ExtensionInstaller,
+    ExtensionProvider,
+    HardwareProvider,
+    PythonPackageAdapter,
+)
 from ..core.backup import create_backup, load_backup, load_extension_backup
 from ..core.catalog import ensure_catalog, iter_candidates, load_catalog
+from ..core.hardware import detected_gfx_targets, hardware_from_devices, probe_hardware
 from ..core.install import (
     InstallResult,
     apply_extension_restore,
@@ -23,6 +31,9 @@ class CatalogState:
     path: Path
     source: str
     refreshed: bool
+    fetched_at: str | None = None
+    catalog_sha256: str | None = None
+    artifact_count: int | None = None
 
 
 class ManagerService:
@@ -48,10 +59,23 @@ class ManagerService:
         catalog_path = ensure_catalog(path, base_url=base_url, refresh=refresh)
         self.catalog = load_catalog(catalog_path)
         source = base_url or ("local file" if path is not None else "official Matrix source")
+        manifest = {}
+        manifest_paths = [catalog_path.parent / "source-manifest.json"]
+        if catalog_path.parent.name == "data":
+            manifest_paths.insert(0, catalog_path.parent.parent / "source-manifest.json")
+        for manifest_path in manifest_paths:
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            break
         self.catalog_state = CatalogState(
             path=catalog_path,
             source=source,
             refreshed=refresh,
+            fetched_at=manifest.get("fetched_at"),
+            catalog_sha256=manifest.get("catalog_sha256"),
+            artifact_count=manifest.get("artifact_count"),
         )
         return self.catalog, self.catalog_state
 
@@ -64,6 +88,9 @@ class ManagerService:
         rocm_version=None,
         include_unavailable=False,
         include_incompatible=False,
+        distribution_family=None,
+        lifecycle=None,
+        candidate_kind=None,
     ):
         if self.catalog is None:
             raise ValueError("load a Matrix catalog before listing candidates")
@@ -79,6 +106,9 @@ class ManagerService:
             python_tag=python_tag,
             include_unavailable=include_unavailable,
             include_incompatible=include_incompatible,
+            distribution_family=distribution_family,
+            lifecycle=lifecycle,
+            candidate_kind=candidate_kind,
         )
 
     def inventory(self, candidate=None):
@@ -88,6 +118,39 @@ class ManagerService:
     def verify(self):
         self._require_target()
         return self.adapter.verify(self.target)
+
+    def hardware(self, runtime=None):
+        self._require_target()
+        runtime_devices = getattr(runtime, "devices", ()) if runtime is not None else ()
+        if runtime_devices:
+            return hardware_from_devices(
+                runtime_devices,
+                scope="target-runtime",
+                source="application-runtime",
+                target_root=self.target.root,
+                host_platform=getattr(runtime, "host_platform", None),
+            )
+        if isinstance(self.adapter, HardwareProvider):
+            return self.adapter.hardware(self.target)
+        return probe_hardware(self.target)
+
+    def host_hardware(self):
+        """Probe host GFX before an application target has been selected."""
+
+        return probe_hardware()
+
+    def inspect(self):
+        """Collect application runtime evidence and shared hardware evidence."""
+
+        self._require_target()
+        runtime = None
+        runtime_error = None
+        try:
+            runtime = self.verify()
+        except CapabilityUnavailable as error:
+            runtime_error = str(error)
+        hardware = self.hardware(runtime)
+        return runtime, hardware, runtime_error
 
     def plan(self, candidate):
         self._require_target()
@@ -115,12 +178,25 @@ class ManagerService:
         if not isinstance(self.adapter, ExtensionProvider):
             raise ValueError(f"adapter {self.adapter.id} has no extension planning capability")
         profiles = (self.catalog or {}).get("_comfyui_extension_profiles", {})
+        extension_catalog = (self.catalog or {}).get("_extension_catalog", {})
         return self.adapter.extension_plan(
             self.target,
             candidate,
             tuple(selections),
             profiles,
+            extension_catalog,
         )
+
+    def extension_capable(self):
+        return isinstance(self.adapter, ExtensionProvider)
+
+    def extension_inventory(self, candidate=None):
+        self._require_target()
+        if not isinstance(self.adapter, ExtensionProvider):
+            raise CapabilityUnavailable(f"adapter {self.adapter.id} has no extension inventory capability")
+        profiles = (self.catalog or {}).get("_comfyui_extension_profiles", {})
+        extension_catalog = (self.catalog or {}).get("_extension_catalog", {})
+        return self.adapter.extension_inventory(self.target, candidate, profiles, extension_catalog)
 
     def apply_extensions(self, plan, backup_dir=None):
         self._require_target()

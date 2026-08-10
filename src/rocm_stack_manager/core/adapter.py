@@ -52,6 +52,14 @@ class PythonPackageAdapter(Protocol):
 
 
 @runtime_checkable
+class HardwareProvider(Protocol):
+    """Optional capability for application-aware hardware detection."""
+
+    def hardware(self, target: Any) -> Any:
+        ...
+
+
+@runtime_checkable
 class ExtensionProvider(Protocol):
     """Optional application-specific extension inventory and planning."""
 

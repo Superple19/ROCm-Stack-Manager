@@ -4,6 +4,7 @@ import json
 import hashlib
 import os
 from pathlib import Path
+import re
 import shutil
 import tempfile
 from datetime import datetime, timezone
@@ -189,6 +190,12 @@ def load_catalog(path):
         raise CatalogError(f"compatibility matrix has no targets: {matrix_path}")
     matrix["_package_snapshots"] = {}
     matrix["_historical_candidates"] = []
+    matrix["_extension_catalog"] = {
+        "schema_version": 1,
+        "generated_at": matrix.get("generated_at"),
+        "sources": {},
+        "extensions": [],
+    }
     _attach_profile(matrix, catalog_path)
     for artifact in artifacts:
         artifact_id = artifact.get("id", "")
@@ -207,6 +214,8 @@ def load_catalog(path):
                 matrix["_package_snapshots"][artifact_id] = document
             elif artifact_id == "package_history":
                 matrix["_historical_candidates"] = document.get("candidates", [])
+            elif artifact_id == "extension_catalog":
+                matrix["_extension_catalog"] = document
     return matrix
 
 
@@ -400,6 +409,9 @@ def iter_candidates(
     python_tag=None,
     include_unavailable=False,
     include_incompatible=False,
+    distribution_family=None,
+    lifecycle=None,
+    candidate_kind=None,
 ):
     """Return install candidates for one platform and optional filters.
 
@@ -410,6 +422,16 @@ def iter_candidates(
     """
 
     candidates = []
+
+    def include(candidate):
+        if distribution_family and candidate.get("distribution_family") != distribution_family:
+            return False
+        if lifecycle and candidate.get("lifecycle") != lifecycle:
+            return False
+        if candidate_kind and candidate.get("candidate_kind") != candidate_kind:
+            return False
+        return True
+
     for target in catalog.get("targets", []):
         target_gfx = target.get("gfx")
         if gfx and target_gfx != gfx:
@@ -429,6 +451,7 @@ def iter_candidates(
             if (
                 (include_unavailable or candidate["artifact_available"])
                 and (include_incompatible or candidate["python_compatibility"] != "incompatible")
+                and include(candidate)
             ):
                 candidates.append(candidate)
     for historical in catalog.get("_historical_candidates", []):
@@ -448,16 +471,40 @@ def iter_candidates(
         if (
             (include_unavailable or candidate["artifact_available"])
             and (include_incompatible or candidate["python_compatibility"] != "incompatible")
+            and include(candidate)
         ):
             candidates.append(candidate)
+
+    def version_key(value):
+        text = str(value or "").strip()
+        if not text:
+            return (1, 0, 0, 0, 0, 0, "")
+        match = re.match(r"^(\d+)(?:\.(\d+))?(?:\.(\d+))?(.*)$", text)
+        if not match:
+            return (0, 0, 0, 0, 0, 0, text)
+        major, minor, patch, suffix = match.groups()
+        date_match = re.search(r"(\d{8})", suffix)
+        date = int(date_match.group(1)) if date_match else 0
+        release = 1 if not suffix or suffix.startswith("+") else 0
+        return (
+            0,
+            -int(major),
+            -int(minor or 0),
+            -int(patch or 0),
+            -release,
+            -date,
+            suffix,
+        )
+
     return sorted(
         candidates,
         key=lambda item: (
             item["gfx"],
             0 if item.get("lifecycle") == "current" else 1,
             {"stable": 0, "nightly": 1, "staging": 2}.get(item["channel"], 9),
-            item["rocm_version"] or "",
-            item["torch_version"] or "",
+            version_key(item.get("rocm_version")),
+            version_key(item.get("torch_version")),
+            item.get("id") or "",
         ),
     )
 

@@ -172,6 +172,32 @@ class CatalogTests(unittest.TestCase):
 
             self.assertEqual(loaded["targets"][0]["gfx"], "gfx1201")
 
+    def test_loads_extension_artifact_catalog(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "data").mkdir()
+            matrix_path = root / "data" / "matrix.json"
+            matrix_path.write_text(json.dumps(_matrix()), encoding="utf-8")
+            extension_path = root / "data" / "extensions.json"
+            extension_path.write_text(
+                json.dumps({"schema_version": 1, "extensions": [{"id": "extension:one"}]}),
+                encoding="utf-8",
+            )
+            catalog_path = root / "data" / "catalog.json"
+            catalog_path.write_text(
+                json.dumps({
+                    "artifacts": [
+                        {"id": "compatibility_matrix", "path": "data/matrix.json"},
+                        {"id": "extension_catalog", "path": "data/extensions.json"},
+                    ]
+                }),
+                encoding="utf-8",
+            )
+
+            loaded = load_catalog(catalog_path)
+
+            self.assertEqual(loaded["_extension_catalog"]["extensions"][0]["id"], "extension:one")
+
     def test_filters_available_candidates(self):
         candidates = iter_candidates(_matrix(), platform="windows", gfx="gfx1201")
 
@@ -205,6 +231,65 @@ class CatalogTests(unittest.TestCase):
         )
 
         self.assertEqual(candidates[0]["candidate_kind"], "artifact_only")
+
+    def test_filters_candidates_by_family_lifecycle_and_kind(self):
+        catalog = _matrix()
+        catalog["_historical_candidates"] = [
+            {
+                "id": "legacy:stable:7.2.1:gfx1201",
+                "distribution_family": "legacy",
+                "platform": "windows",
+                "channel": "stable",
+                "rocm_version": "7.2.1",
+                "torch_version": "2.9.1+rocm7.2.1",
+                "python_tags": ["cp312"],
+                "available_gfx_targets": ["gfx1201"],
+                "artifact_available": True,
+                "wheel_urls": ["https://example.test/torch.whl"],
+            }
+        ]
+
+        legacy = iter_candidates(
+            catalog,
+            platform="windows",
+            gfx="gfx1201",
+            distribution_family="legacy",
+            lifecycle="historical",
+            candidate_kind="installable",
+            python_tag="cp312",
+        )
+
+        self.assertEqual(len(legacy), 1)
+        self.assertEqual(legacy[0]["distribution_family"], "legacy")
+        self.assertEqual(legacy[0]["lifecycle"], "historical")
+
+    def test_newer_versions_sort_before_older_versions(self):
+        catalog = _matrix()
+        catalog["_historical_candidates"] = [
+            {
+                "id": "therock:stable:7.13.0:torch",
+                "distribution_family": "therock",
+                "platform": "windows",
+                "channel": "stable",
+                "rocm_version": "7.13.0",
+                "torch_version": "2.11.0",
+                "python_tags": ["cp312"],
+                "available_gfx_targets": ["gfx1201"],
+                "artifact_available": True,
+                "wheel_urls": ["https://example.test/torch.whl"],
+            }
+        ]
+
+        candidates = iter_candidates(
+            catalog,
+            platform="windows",
+            gfx="gfx1201",
+            distribution_family="therock",
+            channel="stable",
+            python_tag="cp312",
+        )
+
+        self.assertEqual(candidates[0]["rocm_version"], "7.14.0")
 
     def test_candidate_consumes_comfyui_profile(self):
         catalog = _matrix()

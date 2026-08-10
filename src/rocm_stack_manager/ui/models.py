@@ -5,7 +5,10 @@ from PySide6 import QtCore
 
 class CandidateTableModel(QtCore.QAbstractTableModel):
     HEADERS = (
+        "Family",
+        "Lifecycle",
         "Channel",
+        "GFX",
         "ROCm",
         "Torch",
         "TorchVision",
@@ -13,6 +16,7 @@ class CandidateTableModel(QtCore.QAbstractTableModel):
         "Kind",
         "Evidence",
         "Profile",
+        "Candidate ID",
     )
 
     def __init__(self, parent=None):
@@ -37,7 +41,10 @@ class CandidateTableModel(QtCore.QAbstractTableModel):
             return None
         candidate = self._rows[index.row()]
         values = (
+            candidate.get("distribution_family") or "unknown",
+            candidate.get("lifecycle") or "unknown",
             candidate.get("channel") or "unknown",
+            candidate.get("gfx") or "unknown",
             candidate.get("rocm_version") or "unknown",
             candidate.get("torch_version") or "unknown",
             candidate.get("torchvision_version") or "unknown",
@@ -45,6 +52,7 @@ class CandidateTableModel(QtCore.QAbstractTableModel):
             candidate.get("candidate_kind") or "unknown",
             candidate.get("resolver_status") or candidate.get("status") or "unknown",
             candidate.get("profile_status") or "unknown",
+            candidate.get("id") or "unknown",
         )
         return values[index.column()]
 

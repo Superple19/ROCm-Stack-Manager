@@ -4,7 +4,7 @@ from pathlib import Path
 
 from rocm_stack_manager.adapters.registry import available_adapters, get_adapter
 from rocm_stack_manager.cli import parse_args
-from rocm_stack_manager.core.adapter import CapabilityUnavailable, RuntimeAdapter
+from rocm_stack_manager.core.adapter import CapabilityUnavailable, HardwareProvider, RuntimeAdapter
 from rocm_stack_manager.core.detection import detect_target
 
 
@@ -24,6 +24,10 @@ class AdapterContractTests(unittest.TestCase):
 
     def test_comfyui_adapter_satisfies_runtime_contract(self):
         self.assertIsInstance(get_adapter("comfyui"), RuntimeAdapter)
+        self.assertIsInstance(get_adapter("comfyui"), HardwareProvider)
+
+    def test_ollama_exposes_shared_hardware_capability(self):
+        self.assertIsInstance(get_adapter("ollama"), HardwareProvider)
 
     def test_ollama_capabilities_are_explicitly_unavailable(self):
         adapter = get_adapter("ollama")

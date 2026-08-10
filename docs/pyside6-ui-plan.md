@@ -134,7 +134,10 @@ The candidate table should include:
 
 | Column | Meaning |
 |---|---|
+| Family | TheRock or legacy distribution family |
+| Lifecycle | current or historical observation |
 | Channel | stable, nightly, or staging |
+| GFX | Exact target architecture |
 | ROCm | Candidate ROCm package version |
 | Torch | Candidate Torch version |
 | TorchVision | Candidate TorchVision version |
@@ -142,10 +145,12 @@ The candidate table should include:
 | Candidate kind | installable, artifact-only, or unavailable |
 | Evidence | documented/resolver/runtime/hardware state |
 | Profile | ComfyUI profile status and warnings |
+| Candidate ID | Exact immutable candidate identifier |
 
-Filters are explicit and visible: platform, GFX, channel, ROCm version, and
-Python ABI. A row selected in the UI is an exact candidate ID, not a fuzzy
-version request.
+Filters are explicit and visible: platform, GFX, distribution family,
+current/historical lifecycle, channel, ROCm version, and candidate state. The
+UI shows total/current/historical/installable counts after each search. A row
+selected in the UI is an exact candidate ID, not a fuzzy version request.
 
 ### 5. Plan and inventory
 
@@ -156,6 +161,13 @@ Selecting a candidate enables:
   warnings, and backup scope.
 - `Extension plan`: show each extension as `installable`, `blocked`,
   `unverified`, `conflict`, or `not_installed`.
+
+After target detection, the UI also runs the ComfyUI extension inventory
+without a candidate and without network access. This inventory shows the
+installed package versions and Matrix claim status independently from the
+candidate browser. Loading or refreshing the Matrix catalog refreshes this
+extension view so a missing local profile is not mistaken for a missing
+installed package.
 
 The plan view must visibly state `No files changed` and `No package command was
 executed` for dry-run results.

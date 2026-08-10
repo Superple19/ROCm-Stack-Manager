@@ -4,6 +4,7 @@ from ...core.adapter import CapabilityUnavailable
 from ...core.backup import create_extension_backup, load_extension_backup
 from ...core.inventory import collect_inventory
 from ...core.install import apply_extension_restore, build_extension_restore_plan
+from ...core.hardware import probe_hardware
 from ...core.launch import LaunchOptions, LaunchPlan
 from ...core.planning import build_plan
 from ...core.verify import probe_target, target_python_tag
@@ -37,17 +38,20 @@ class ComfyUIAdapter:
     def verify(self, target):
         return probe_target(target)
 
+    def hardware(self, target):
+        return probe_hardware(target)
+
     def python_tag(self, target):
         return target_python_tag(target)
 
     def launch(self, target, options: LaunchOptions):
         raise CapabilityUnavailable("ComfyUI launch planning is not implemented")
 
-    def extension_inventory(self, target, candidate=None, profile_documents=None):
+    def extension_inventory(self, target, candidate=None, profile_documents=None, extension_catalog=None):
         inventory = self.inventory(target, candidate)
-        return build_extension_report(inventory, profile_documents, candidate)
+        return build_extension_report(inventory, profile_documents, candidate, extension_catalog)
 
-    def extension_plan(self, target, candidate, selections=(), profile_documents=None):
+    def extension_plan(self, target, candidate, selections=(), profile_documents=None, extension_catalog=None):
         inventory = self.inventory(target, candidate)
         return build_extension_plan(
             target,
@@ -55,6 +59,7 @@ class ComfyUIAdapter:
             candidate,
             profile_documents,
             selections,
+            extension_catalog,
         )
 
     def create_extension_backup(self, target, plan, destination=None):

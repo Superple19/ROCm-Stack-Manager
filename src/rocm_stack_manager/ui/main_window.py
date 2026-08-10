@@ -8,7 +8,7 @@ from PySide6 import QtCore, QtWidgets
 
 from ..adapters.registry import available_adapters
 from .models import CandidateTableModel
-from .services import ManagerService
+from .services import ManagerService, detected_gfx_targets
 from .workers import Task
 
 
@@ -26,6 +26,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._restore_path = None
         self._restore_kind = None
         self._build_ui()
+        if hasattr(self.service, "host_hardware"):
+            QtCore.QTimer.singleShot(0, self._probe_host_hardware)
 
     def _build_ui(self):
         self.setWindowTitle("ROCm Stack Manager")
@@ -82,23 +84,40 @@ class MainWindow(QtWidgets.QMainWindow):
         self.platform_combo = QtWidgets.QComboBox()
         self.platform_combo.addItems(("windows", "linux"))
         self.platform_combo.setCurrentText("windows" if os.name == "nt" else "linux")
-        self.gfx_edit = QtWidgets.QLineEdit()
-        self.gfx_edit.setPlaceholderText("gfx1201")
+        self.gfx_edit = QtWidgets.QComboBox()
+        self.gfx_edit.setEditable(True)
+        self.gfx_edit.lineEdit().setPlaceholderText("Detected GFX or enter manually")
+        self.gfx_status = QtWidgets.QLabel("No GFX detected")
         self.channel_combo = QtWidgets.QComboBox()
         self.channel_combo.addItems(("all", "stable", "nightly", "staging"))
         self.rocm_edit = QtWidgets.QLineEdit()
         self.rocm_edit.setPlaceholderText("Optional exact ROCm version")
+        self.family_combo = QtWidgets.QComboBox()
+        self.family_combo.addItems(("all", "therock", "legacy"))
+        self.lifecycle_combo = QtWidgets.QComboBox()
+        self.lifecycle_combo.addItems(("all", "current", "historical"))
+        self.kind_combo = QtWidgets.QComboBox()
+        self.kind_combo.addItems(("all", "installable", "artifact_only", "unavailable"))
+        self.candidate_summary = QtWidgets.QLabel("No candidates loaded")
         find = QtWidgets.QPushButton("Find candidates")
         find.clicked.connect(self._find_candidates)
         filter_layout.addWidget(QtWidgets.QLabel("Platform"), 0, 0)
         filter_layout.addWidget(self.platform_combo, 0, 1)
         filter_layout.addWidget(QtWidgets.QLabel("GFX"), 0, 2)
         filter_layout.addWidget(self.gfx_edit, 0, 3)
-        filter_layout.addWidget(QtWidgets.QLabel("Channel"), 0, 4)
-        filter_layout.addWidget(self.channel_combo, 0, 5)
-        filter_layout.addWidget(QtWidgets.QLabel("ROCm"), 0, 6)
-        filter_layout.addWidget(self.rocm_edit, 0, 7)
-        filter_layout.addWidget(find, 0, 8)
+        filter_layout.addWidget(self.gfx_status, 0, 4)
+        filter_layout.addWidget(QtWidgets.QLabel("Channel"), 0, 5)
+        filter_layout.addWidget(self.channel_combo, 0, 6)
+        filter_layout.addWidget(QtWidgets.QLabel("ROCm"), 0, 7)
+        filter_layout.addWidget(self.rocm_edit, 0, 8)
+        filter_layout.addWidget(find, 0, 9)
+        filter_layout.addWidget(QtWidgets.QLabel("Family"), 1, 0)
+        filter_layout.addWidget(self.family_combo, 1, 1)
+        filter_layout.addWidget(QtWidgets.QLabel("Lifecycle"), 1, 2)
+        filter_layout.addWidget(self.lifecycle_combo, 1, 3)
+        filter_layout.addWidget(QtWidgets.QLabel("Candidate state"), 1, 5)
+        filter_layout.addWidget(self.kind_combo, 1, 6)
+        filter_layout.addWidget(self.candidate_summary, 1, 7, 1, 3)
         root.addWidget(filters)
 
         self.candidate_model = CandidateTableModel(self)
@@ -111,6 +130,21 @@ class MainWindow(QtWidgets.QMainWindow):
         self.candidate_view.horizontalHeader().setStretchLastSection(True)
         self.candidate_view.setMinimumHeight(220)
         root.addWidget(self.candidate_view, 1)
+
+        extension_group = QtWidgets.QGroupBox("ComfyUI extension inventory")
+        extension_layout = QtWidgets.QVBoxLayout(extension_group)
+        self.extension_summary = QtWidgets.QLabel("No target extension inventory")
+        self.extension_table = QtWidgets.QTableWidget(0, 8)
+        self.extension_table.setHorizontalHeaderLabels(
+            ("Extension", "Status", "Installed", "Target match", "Latest artifact", "Matrix claim", "Evidence", "Reason")
+        )
+        self.extension_table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.extension_table.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.NoSelection)
+        self.extension_table.horizontalHeader().setStretchLastSection(True)
+        self.extension_table.setMinimumHeight(150)
+        extension_layout.addWidget(self.extension_summary)
+        extension_layout.addWidget(self.extension_table)
+        root.addWidget(extension_group)
 
         actions = QtWidgets.QHBoxLayout()
         self.verify_button = QtWidgets.QPushButton("Verify target")
@@ -164,6 +198,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._candidate = None
         self._clear_plan_state()
         self.candidate_model.set_rows(())
+        self.candidate_summary.setText("No candidates loaded")
+        self.extension_summary.setText("Extension inventory is unavailable for this adapter")
+        self.extension_table.setRowCount(0)
         self.verify_button.setEnabled(False)
         self.restore_button.setEnabled(False)
         self._update_candidate_actions()
@@ -198,7 +235,17 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _detect(self):
         path = self.target_edit.text().strip() or "."
-        self._run("Detect", lambda: self.service.detect(path), self._display_target)
+        self._run("Detect", lambda: self.service.detect(path), self._display_target_and_probe)
+
+    def _display_target_and_probe(self, target):
+        self._display_target(target)
+        self._run("Inspect runtime and hardware", self.service.inspect, self._display_inspection)
+        if getattr(self.service, "extension_capable", lambda: False)():
+            self._run(
+                "Inspect ComfyUI extensions",
+                self.service.extension_inventory,
+                self._display_extension_inventory,
+            )
 
     def _display_target(self, target):
         values = target.as_dict()
@@ -210,6 +257,58 @@ class MainWindow(QtWidgets.QMainWindow):
         self.restore_button.setEnabled(True)
         self._update_candidate_actions()
 
+    def _probe_host_hardware(self):
+        self._run("Probe host hardware", self.service.host_hardware, self._display_host_hardware)
+
+    def _set_gfx_observation(self, observation, label):
+        values = observation.as_dict()
+        detected = detected_gfx_targets(observation)
+        self.gfx_edit.blockSignals(True)
+        self.gfx_edit.clear()
+        self.gfx_edit.addItems(detected)
+        if len(detected) == 1:
+            self.gfx_edit.setCurrentIndex(0)
+            self.gfx_status.setText(f"{label}: {detected[0]}")
+        elif detected:
+            self.gfx_edit.setCurrentIndex(-1)
+            self.gfx_edit.lineEdit().setPlaceholderText("Select a detected GFX target")
+            self.gfx_status.setText(f"{label}: {len(detected)} GFX targets")
+        else:
+            self.gfx_edit.setCurrentIndex(-1)
+            self.gfx_edit.lineEdit().setPlaceholderText("Detected GFX unavailable; enter manually")
+            self.gfx_status.setText(f"{label}: no GFX; manual entry allowed")
+        self.gfx_edit.blockSignals(False)
+        host_platform = values.get("host_platform")
+        if host_platform in {self.platform_combo.itemText(index) for index in range(self.platform_combo.count())}:
+            self.platform_combo.setCurrentText(host_platform)
+
+    def _display_host_hardware(self, observation):
+        self._set_gfx_observation(observation, "Host detected")
+        self._append_json({"host_hardware_probe": observation.as_dict()})
+
+    def _display_runtime(self, observation, *, append=True):
+        values = observation.as_dict()
+        detected = detected_gfx_targets(observation)
+        self._set_gfx_observation(observation, "Target runtime")
+        if append:
+            self._append_json({"runtime_probe": values, "detected_gfx": list(detected)})
+
+    def _display_inspection(self, result):
+        runtime, hardware, runtime_error = result
+        if runtime is not None:
+            runtime_values = runtime.as_dict()
+        else:
+            runtime_values = {"status": "unavailable", "error": runtime_error}
+        hardware_values = hardware.as_dict()
+        self._display_runtime(hardware, append=False)
+        self._append_json(
+            {
+                "runtime_probe": runtime_values,
+                "hardware_probe": hardware_values,
+                "runtime_error": runtime_error,
+            }
+        )
+
     def _load_catalog(self, refresh):
         path = None if refresh else (self.catalog_edit.text().strip() or None)
         self._run(
@@ -220,23 +319,46 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _display_catalog(self, result):
         _, state = result
+        fetched = state.fetched_at or "unknown"
+        artifacts = state.artifact_count if state.artifact_count is not None else "unknown"
         self.catalog_summary.setText(
             f"Loaded: {state.path} | Source: {state.source} | "
+            f"Fetched: {fetched} | Artifacts: {artifacts} | "
             f"Refresh requested: {'yes' if state.refreshed else 'no'}"
         )
-        self._append_json({"catalog": str(state.path), "source": state.source})
+        self._append_json(
+            {
+                "catalog": str(state.path),
+                "source": state.source,
+                "fetched_at": state.fetched_at,
+                "catalog_sha256": state.catalog_sha256,
+                "artifact_count": state.artifact_count,
+            }
+        )
+        if self.service.target is not None and getattr(self.service, "extension_capable", lambda: False)():
+            self._run(
+                "Refresh ComfyUI extensions",
+                self.service.extension_inventory,
+                self._display_extension_inventory,
+            )
 
     def _find_candidates(self):
         if self.service.catalog is None:
             self._show_error("CatalogError: load a Matrix catalog first")
             return
-        gfx = self.gfx_edit.text().strip()
+        gfx = self.gfx_edit.currentText().strip()
         if not gfx:
             self._show_error("ValueError: enter a GFX target")
             return
         channel = self.channel_combo.currentText()
         channel = None if channel == "all" else channel
         rocm_version = self.rocm_edit.text().strip() or None
+        family = self.family_combo.currentText()
+        family = None if family == "all" else family
+        lifecycle = self.lifecycle_combo.currentText()
+        lifecycle = None if lifecycle == "all" else lifecycle
+        candidate_kind = self.kind_combo.currentText()
+        candidate_kind = None if candidate_kind == "all" else candidate_kind
         self._run(
             "Find candidates",
             lambda: self.service.candidates(
@@ -244,6 +366,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 gfx=gfx,
                 channel=channel,
                 rocm_version=rocm_version,
+                include_unavailable=True,
+                include_incompatible=True,
+                distribution_family=family,
+                lifecycle=lifecycle,
+                candidate_kind=candidate_kind,
             ),
             self._display_candidates,
         )
@@ -253,6 +380,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self._candidate = None
         self._clear_plan_state()
         self.candidate_model.set_rows(self._candidates)
+        current = sum(item.get("lifecycle") == "current" for item in self._candidates)
+        historical = sum(item.get("lifecycle") == "historical" for item in self._candidates)
+        installable = sum(item.get("candidate_kind") == "installable" for item in self._candidates)
+        artifact_only = sum(item.get("candidate_kind") == "artifact_only" for item in self._candidates)
+        self.candidate_summary.setText(
+            f"{len(self._candidates)} total | current {current} | historical {historical} | "
+            f"installable {installable} | artifact-only {artifact_only}"
+        )
         self._update_candidate_actions()
         self.statusBar().showMessage(f"{len(self._candidates)} candidates")
 
@@ -275,7 +410,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.apply_extension_button.setEnabled(False)
 
     def _verify(self):
-        self._run("Verify target", self.service.verify, lambda result: self._append_json(result.as_dict()))
+        self._run("Inspect runtime and hardware", self.service.inspect, self._display_inspection)
 
     def _inventory(self):
         self._run(
@@ -297,6 +432,34 @@ class MainWindow(QtWidgets.QMainWindow):
             lambda: self.service.extension_plan(self._candidate),
             self._display_extension_plan,
         )
+
+    def _display_extension_inventory(self, report):
+        records = report.get("extensions", [])
+        self.extension_table.setRowCount(len(records))
+        for row, extension in enumerate(records):
+            installed = ", ".join(
+                f"{package['name']}=={package['version']}"
+                for package in extension.get("installed", [])
+            ) or "not installed"
+            claim = extension.get("matrix_claim_status") or extension.get("claim_status") or "unknown"
+            latest = extension.get("latest_artifact") or {}
+            latest_label = latest.get("version") or "not collected"
+            evidence = ", ".join(extension.get("catalog_evidence_refs") or extension.get("evidence_refs") or []) or "none"
+            values = (
+                extension.get("name") or extension.get("id") or "unknown",
+                extension.get("status") or "unknown",
+                installed,
+                extension.get("target_match") or "unknown",
+                latest_label,
+                claim,
+                evidence,
+                extension.get("reason") or "",
+            )
+            for column, value in enumerate(values):
+                self.extension_table.setItem(row, column, QtWidgets.QTableWidgetItem(str(value)))
+        status = report.get("status", "unknown")
+        self.extension_summary.setText(f"Inventory: {status} | {len(records)} known extensions")
+        self._append_json({"extension_inventory": report})
 
     def _display_core_plan(self, result):
         self._core_plan = result
