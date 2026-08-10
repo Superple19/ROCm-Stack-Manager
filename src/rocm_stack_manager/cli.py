@@ -9,9 +9,17 @@ from pathlib import Path
 
 from .adapters.comfyui.detect import detect_comfyui, python_tag_comfyui, verify_comfyui
 from .core.catalog import CatalogError, iter_candidates, load_catalog
+from .core.backup import BackupError, create_backup, load_backup
 from .core.detection import TargetDetectionError
 from .core.inventory import collect_inventory
-from .core.install import dry_run_install
+from .core.install import (
+    InstallationError,
+    InstallResult,
+    apply_install,
+    apply_restore,
+    build_restore_plan,
+    dry_run_install,
+)
 from .core.planning import PlanningError, build_plan
 
 
@@ -60,7 +68,19 @@ def parse_args(argv=None):
     _add_catalog_options(install)
     install.add_argument("--candidate", required=True, help="Exact Matrix candidate ID")
     install.add_argument("--allow-unverified", action="store_true")
+    install.add_argument("--apply", action="store_true", help="Apply after creating a package backup")
+    install.add_argument("--backup-dir", type=Path, help="Optional backup directory")
     install.add_argument("--json", action="store_true", dest="json_output")
+
+    restore = subparsers.add_parser(
+        "restore",
+        aliases=("rollback",),
+        help="Restore recorded target package versions",
+    )
+    restore.add_argument("--target", type=Path, required=True, help="Portable root or ComfyUI directory")
+    restore.add_argument("--backup", type=Path, required=True, help="Backup JSON created by install --apply")
+    restore.add_argument("--apply", action="store_true", help="Apply the restore; default is dry-run")
+    restore.add_argument("--json", action="store_true", dest="json_output")
     return parser.parse_args(argv)
 
 
@@ -149,6 +169,27 @@ def main(argv=None):
                 print(f"Devices: {values['device_count']}")
             return 0
 
+        if args.command in {"restore", "rollback"}:
+            backup = load_backup(args.backup)
+            if args.apply:
+                result = apply_restore(target, backup)
+            else:
+                result = InstallResult(plan=build_restore_plan(target, backup))
+            if args.json_output:
+                print(json.dumps(result.as_dict(), indent=2, sort_keys=True))
+            else:
+                print(f"Target: {result.plan.target_root}")
+                print(f"Backup: {backup.path}")
+                print(f"Command: {subprocess.list2cmdline(result.plan.command)}")
+                print("Mode: applied" if args.apply else "Mode: dry-run (pip was not executed)")
+                if args.apply:
+                    print(f"Return code: {result.returncode}")
+                for warning in result.plan.warnings:
+                    print(f"Warning: {warning}")
+                if result.output:
+                    print(result.output.rstrip())
+            return 0
+
         catalog = load_catalog(args.catalog)
         python_tag = python_tag_comfyui(target)
         if args.command == "candidates":
@@ -170,7 +211,18 @@ def main(argv=None):
             _print_inventory(collect_inventory(target, candidate), args.json_output)
             return 0
         if args.command == "install":
-            result = dry_run_install(target, candidate, allow_unverified=args.allow_unverified)
+            if args.apply:
+                if candidate.get("resolver_status") == "resolver_failed" and not args.allow_unverified:
+                    raise InstallationError("resolver evidence failed; pass --allow-unverified to apply")
+                backup = create_backup(target, args.backup_dir)
+                result = apply_install(
+                    target,
+                    candidate,
+                    backup,
+                    allow_unverified=args.allow_unverified,
+                )
+            else:
+                result = dry_run_install(target, candidate, allow_unverified=args.allow_unverified)
             if args.json_output:
                 print(json.dumps(result.as_dict(), indent=2, sort_keys=True))
             else:
@@ -178,9 +230,15 @@ def main(argv=None):
                 print(f"Candidate: {candidate['id']}")
                 print(f"Distribution: {candidate['distribution_family']}")
                 print(f"Command: {subprocess.list2cmdline(result.plan.command)}")
-                print("Mode: dry-run (pip was not executed)")
+                print("Mode: applied" if args.apply else "Mode: dry-run (pip was not executed)")
+                if result.backup_path:
+                    print(f"Backup: {result.backup_path}")
+                if args.apply:
+                    print(f"Return code: {result.returncode}")
                 for warning in result.plan.warnings:
                     print(f"Warning: {warning}")
+                if result.output:
+                    print(result.output.rstrip())
             return 0
         plan = build_plan(target, candidate)
         if args.json_output:
@@ -198,7 +256,7 @@ def main(argv=None):
                 print(f"Wheel URLs: {len(candidate['wheel_urls'])}")
             print("Mode: dry-run (no files changed)")
         return 0
-    except (TargetDetectionError, CatalogError, PlanningError) as error:
+    except (TargetDetectionError, CatalogError, PlanningError, InstallationError, BackupError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
 

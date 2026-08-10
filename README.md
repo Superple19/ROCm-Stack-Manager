@@ -32,6 +32,9 @@ python -m rocm_stack_manager plan `
   --catalog C:\path\to\rocm-evidence-matrix\data\catalog.json `
   --target C:\path\to\comfyui-portable `
   --platform windows --gfx gfx1201 --candidate <candidate-id>
+python -m rocm_stack_manager restore `
+  --target C:\path\to\comfyui-portable `
+  --backup C:\path\to\backup\packages-<timestamp>.json
 ```
 
 The selected target is expected to contain a `ComfyUI` directory with
@@ -51,9 +54,15 @@ as installable merely because a release name exists in documentation.
 The `inventory` command reads installed distributions from the selected target
 Python and classifies them against one candidate. Compiled extensions without
 matching evidence remain `unknown`; they are never assumed compatible.
-The `install` command currently only emits a target-local pip command. It never
-executes pip, and candidates with failed resolver evidence produce an explicit
-warning requiring `--allow-unverified` for a future apply operation.
+The `install` command emits a target-local pip command by default. It never
+executes pip unless `--apply` is explicitly provided, and candidates with failed
+resolver evidence produce an explicit warning requiring `--allow-unverified`.
+Passing `--apply` explicitly creates a target-local package backup before
+running pip. Applying a failed-resolver candidate additionally requires
+`--allow-unverified`.
+The `restore` command (also available as `rollback`) accepts a backup JSON path
+and is dry-run by default. It reinstalls recorded versions with
+`--force-reinstall`; it does not remove extra packages.
 The `verify` command executes only the selected target's Python interpreter. It
 does not call a globally installed ROCm executable; host GPU state is reported
 separately from target-local Torch, HIP, and ROCm package metadata.
