@@ -82,10 +82,12 @@ def parse_args(argv=None):
     inventory.add_argument("--candidate", required=True, help="Exact Matrix candidate ID")
     inventory.add_argument("--json", action="store_true", dest="json_output")
 
-    extensions = subparsers.add_parser("extensions", help="Report ComfyUI extension compatibility")
+    extensions = subparsers.add_parser("extensions", help="Report or plan ComfyUI extensions")
+    extensions.add_argument("action", nargs="?", choices=("report", "plan"), default="report")
     extensions.add_argument("--target", type=Path, required=True, help="Portable root or ComfyUI directory")
     extensions.add_argument("--catalog", type=Path, help="Optional Matrix catalog.json for profile evidence")
     extensions.add_argument("--candidate", help="Optional exact Matrix candidate ID")
+    extensions.add_argument("--extension", dest="selections", action="append", default=[])
     _add_adapter_option(extensions)
     extensions.add_argument("--json", action="store_true", dest="json_output")
 
@@ -260,6 +262,34 @@ def main(argv=None):
                     ),
                     python_tag,
                 )
+            if args.action == "plan":
+                if candidate is None:
+                    raise CatalogError("extensions plan requires --catalog and --candidate")
+                plan = adapter.extension_plan(
+                    target,
+                    candidate,
+                    tuple(args.selections),
+                    extension_profiles,
+                )
+                if args.json_output:
+                    print(json.dumps(plan.as_dict(), indent=2, sort_keys=True))
+                else:
+                    print(f"Target: {plan.target_root}")
+                    print(f"Candidate: {candidate['id']}")
+                    print("Mode: dry-run (no network, no installation)")
+                    for extension in plan.extensions:
+                        print(f"{extension['name']} | {extension['status']}")
+                        print(f"  Reason: {extension['reason']}")
+                        if extension["sources"]:
+                            print(f"  Sources: {', '.join(extension['sources'])}")
+                    for command in plan.commands:
+                        print(
+                            f"Command ({command['extension_id']}): "
+                            f"{subprocess.list2cmdline(command['command'])}"
+                        )
+                    for warning in plan.warnings:
+                        print(f"Warning: {warning}")
+                return 0
             report = adapter.extension_inventory(target, candidate, extension_profiles)
             if args.json_output:
                 print(json.dumps(report, indent=2, sort_keys=True))

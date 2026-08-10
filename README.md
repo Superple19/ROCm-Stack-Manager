@@ -36,6 +36,10 @@ python -m rocm_stack_manager verify --target C:\path\to\comfyui-portable --json
 python -m rocm_stack_manager extensions `
   --target C:\path\to\comfyui-portable `
   --catalog C:\path\to\rocm-evidence-matrix\data\catalog.json
+python -m rocm_stack_manager extensions plan `
+  --target C:\path\to\comfyui-portable `
+  --catalog C:\path\to\rocm-evidence-matrix\data\catalog.json `
+  --candidate <candidate-id>
 python -m rocm_stack_manager inventory `
   --catalog C:\path\to\rocm-evidence-matrix\data\catalog.json `
   --target C:\path\to\comfyui-portable `
@@ -93,6 +97,11 @@ The `extensions` command reports known ComfyUI extensions from local inventory
 only. With `--catalog`, it also displays the Matrix extension profile and its
 claim/evidence status. It does not contact package hosts, install extensions,
 or treat an installed extension as compatible without ABI/runtime evidence.
+`extensions plan` adds the selected core candidate and produces a read-only
+extension installation plan. It emits commands only when the Matrix profile
+contains an exact source, evidence reference, artifact claim, and matching
+platform/Python/GFX/ABI constraints. The current extension profiles are
+unverified and therefore remain blocked from installation.
 The `install` command emits a target-local pip command by default. It never
 executes pip unless `--apply` is explicitly provided, and candidates with failed
 resolver evidence produce an explicit warning requiring `--allow-unverified`.
