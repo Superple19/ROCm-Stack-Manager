@@ -1,7 +1,11 @@
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from rocm_stack_manager.adapters.comfyui.extensions import (
+    ExtensionInstallResult,
+    ExtensionPlan,
+    apply_extension_plan,
     build_extension_plan,
     build_extension_report,
 )
@@ -193,3 +197,44 @@ class ExtensionReportTests(unittest.TestCase):
 
         self.assertEqual(plan.extensions[0]["status"], "blocked")
         self.assertEqual(plan.commands, ())
+
+    def test_apply_rejects_non_installable_selection(self):
+        plan = ExtensionPlan(
+            Path("C:/target"),
+            {"id": "candidate"},
+            ({"id": "bitsandbytes", "status": "unverified"},),
+        )
+        backup = type("Backup", (), {"path": Path("C:/backup.json")})()
+        target = type("Target", (), {"comfyui_dir": Path("C:/target")})()
+
+        with self.assertRaises(ValueError):
+            apply_extension_plan(target, plan, backup)
+
+    def test_apply_runs_only_planned_commands(self):
+        plan = ExtensionPlan(
+            Path("C:/target"),
+            {"id": "candidate"},
+            ({"id": "bitsandbytes", "status": "installable"},),
+            ({"extension_id": "bitsandbytes", "command": ["python", "-m", "pip", "install", "pkg"]},),
+        )
+        backup = type("Backup", (), {"path": Path("C:/backup.json")})()
+        target = type(
+            "Target",
+            (),
+            {
+                "root": Path("C:/target"),
+                "comfyui_dir": Path("C:/target"),
+                "python_executable": Path("C:/target/python.exe"),
+            },
+        )()
+        completed = type("Completed", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
+
+        with patch(
+            "rocm_stack_manager.adapters.comfyui.extensions.subprocess.run",
+            return_value=completed,
+        ) as run:
+            result = apply_extension_plan(target, plan, backup)
+
+        self.assertIsInstance(result, ExtensionInstallResult)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(run.call_args.args[0][0], "python")

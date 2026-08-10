@@ -1,12 +1,19 @@
 """ComfyUI implementation of the shared ROCm adapter contract."""
 
 from ...core.adapter import CapabilityUnavailable
+from ...core.backup import create_extension_backup, load_extension_backup
 from ...core.inventory import collect_inventory
+from ...core.install import apply_extension_restore, build_extension_restore_plan
 from ...core.launch import LaunchOptions, LaunchPlan
 from ...core.planning import build_plan
 from ...core.verify import probe_target, target_python_tag
 from .detect import detect_comfyui
-from .extensions import build_extension_plan, build_extension_report
+from .extensions import (
+    apply_extension_plan,
+    build_extension_plan,
+    build_extension_report,
+    package_names_for_extensions,
+)
 
 
 class ComfyUIAdapter:
@@ -49,3 +56,28 @@ class ComfyUIAdapter:
             profile_documents,
             selections,
         )
+
+    def create_extension_backup(self, target, plan, destination=None):
+        blocked = [item for item in plan.extensions if item["status"] != "installable"]
+        if blocked:
+            names = ", ".join(item["id"] for item in blocked)
+            raise CapabilityUnavailable(
+                f"extension plan contains non-installable selections: {names}"
+            )
+        extension_ids = tuple(item["id"] for item in plan.extensions)
+        return create_extension_backup(
+            target,
+            package_names_for_extensions(extension_ids),
+            extension_ids=extension_ids,
+            candidate_id=plan.candidate.get("id"),
+            destination=destination,
+        )
+
+    def apply_extension_plan(self, target, plan, backup):
+        return apply_extension_plan(target, plan, backup)
+
+    def restore_extensions(self, target, backup_path, apply=False):
+        backup = load_extension_backup(backup_path)
+        if apply:
+            return apply_extension_restore(target, backup)
+        return build_extension_restore_plan(target, backup)

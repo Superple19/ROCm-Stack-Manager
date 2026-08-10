@@ -2,8 +2,11 @@
 
 from dataclasses import dataclass
 from pathlib import Path
+import subprocess
 from urllib.parse import urlparse
 
+from ...core.backup import ExtensionBackupSnapshot
+from ...core.verify import _clean_environment
 
 @dataclass(frozen=True)
 class ExtensionProfile:
@@ -211,6 +214,29 @@ class ExtensionPlan:
         }
 
 
+@dataclass(frozen=True)
+class ExtensionInstallResult:
+    """Result of an explicitly applied ComfyUI extension plan."""
+
+    plan: ExtensionPlan
+    applied: bool = False
+    returncode: int | None = None
+    backup_path: str | None = None
+    output: str = ""
+
+    def as_dict(self):
+        values = self.plan.as_dict()
+        values.update(
+            {
+                "applied": self.applied,
+                "returncode": self.returncode,
+                "backup_path": self.backup_path,
+                "output": self.output,
+            }
+        )
+        return values
+
+
 def build_extension_report(inventory, profile_documents=None, candidate=None):
     """Classify known extensions using only target-local package evidence.
 
@@ -331,4 +357,70 @@ def build_extension_plan(
         extensions=tuple(records),
         commands=tuple(commands),
         warnings=tuple(warnings),
+    )
+
+
+def package_names_for_extensions(extension_ids=()):
+    """Return package aliases owned by selected ComfyUI extensions."""
+
+    selected = set(extension_ids)
+    return tuple(
+        package_name
+        for profile in PROFILES
+        if not selected or profile.id in selected
+        for package_name in profile.package_names
+    )
+
+
+def apply_extension_plan(target, plan, backup, timeout=3600):
+    """Apply only a fully installable extension plan."""
+
+    blocked = [item for item in plan.extensions if item["status"] != "installable"]
+    if blocked:
+        names = ", ".join(item["id"] for item in blocked)
+        raise ValueError(f"extension plan contains non-installable selections: {names}")
+    if not plan.commands:
+        return ExtensionInstallResult(
+            plan=plan,
+            applied=True,
+            returncode=0,
+            backup_path=str(backup.path),
+        )
+
+    output_parts = []
+    for command_record in plan.commands:
+        try:
+            completed = subprocess.run(
+                command_record["command"],
+                cwd=str(target.comfyui_dir),
+                env=_clean_environment(target),
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=timeout,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            output_parts.append(f"{command_record['extension_id']}: {type(error).__name__}: {error}")
+            return ExtensionInstallResult(
+                plan=plan,
+                applied=True,
+                backup_path=str(backup.path),
+                output="\n".join(output_parts),
+            )
+        output = (completed.stdout or "") + (completed.stderr or "")
+        output_parts.append(f"{command_record['extension_id']}:\n{output}".rstrip())
+        if completed.returncode != 0:
+            return ExtensionInstallResult(
+                plan=plan,
+                applied=True,
+                returncode=completed.returncode,
+                backup_path=str(backup.path),
+                output="\n".join(output_parts),
+            )
+    return ExtensionInstallResult(
+        plan=plan,
+        applied=True,
+        returncode=0,
+        backup_path=str(backup.path),
+        output="\n".join(output_parts),
     )

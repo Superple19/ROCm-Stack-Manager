@@ -71,3 +71,17 @@ class ExtensionProvider(Protocol):
         profile_documents: dict | None = None,
     ) -> Any:
         ...
+
+
+@runtime_checkable
+class ExtensionInstaller(Protocol):
+    """Optional capability for explicit extension apply and recovery."""
+
+    def create_extension_backup(self, target: Any, plan: Any, destination=None) -> Any:
+        ...
+
+    def apply_extension_plan(self, target: Any, plan: Any, backup: Any) -> Any:
+        ...
+
+    def restore_extensions(self, target: Any, backup_path, apply=False) -> Any:
+        ...

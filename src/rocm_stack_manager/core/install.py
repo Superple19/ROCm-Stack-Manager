@@ -6,7 +6,7 @@ import subprocess
 import re
 from urllib.parse import unquote, urlparse
 
-from .backup import BackupSnapshot
+from .backup import BackupSnapshot, ExtensionBackupSnapshot
 from .inventory import collect_inventory
 from .planning import InstallPlan, PlanningError
 from .verify import _clean_environment
@@ -256,6 +256,42 @@ def build_restore_plan(target, backup):
     )
 
 
+def build_extension_restore_plan(target, backup: ExtensionBackupSnapshot):
+    """Build a restore plan for an extension-only backup."""
+
+    if not isinstance(backup, ExtensionBackupSnapshot):
+        raise InstallationError("invalid extension package backup")
+    if target.python_executable is None:
+        raise InstallationError("target Python executable was not found")
+    if backup.target_root:
+        if Path(backup.target_root).expanduser().resolve() != Path(target.root).expanduser().resolve():
+            raise InstallationError(f"backup belongs to a different target: {backup.target_root}")
+    if not backup.requirements:
+        return InstallPlan(
+            target_root=target.root,
+            candidate={"id": f"backup:{backup.path.name}"},
+            command=(),
+            warnings=("no extension packages were recorded; nothing to restore",),
+        )
+    if not backup.requirements_path.is_file():
+        raise InstallationError(f"extension backup requirements file is missing: {backup.requirements_path}")
+    return InstallPlan(
+        target_root=target.root,
+        candidate={"id": f"backup:{backup.path.name}"},
+        command=(
+            str(target.python_executable),
+            "-m",
+            "pip",
+            "install",
+            "--no-input",
+            "--force-reinstall",
+            "--requirement",
+            str(backup.requirements_path),
+        ),
+        warnings=("restore reinstalls recorded extensions but does not prune extra packages",),
+    )
+
+
 def apply_restore(target, backup, timeout=3600):
     """Run a restore command after explicit user approval."""
 
@@ -272,6 +308,43 @@ def apply_restore(target, backup, timeout=3600):
         )
     except (OSError, subprocess.TimeoutExpired) as error:
         return InstallResult(plan=plan, applied=True, output=f"{type(error).__name__}: {error}")
+    return InstallResult(
+        plan=plan,
+        applied=True,
+        returncode=completed.returncode,
+        backup_path=str(backup.path),
+        output=(completed.stdout or "") + (completed.stderr or ""),
+    )
+
+
+def apply_extension_restore(target, backup: ExtensionBackupSnapshot, timeout=3600):
+    """Apply an extension-only restore after explicit approval."""
+
+    plan = build_extension_restore_plan(target, backup)
+    if not plan.command:
+        return InstallResult(
+            plan=plan,
+            applied=True,
+            returncode=0,
+            backup_path=str(backup.path),
+        )
+    try:
+        completed = subprocess.run(
+            list(plan.command),
+            cwd=str(target.comfyui_dir),
+            env=_clean_environment(target),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return InstallResult(
+            plan=plan,
+            applied=True,
+            backup_path=str(backup.path),
+            output=f"{type(error).__name__}: {error}",
+        )
     return InstallResult(
         plan=plan,
         applied=True,

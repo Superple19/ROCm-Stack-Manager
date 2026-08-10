@@ -40,6 +40,13 @@ python -m rocm_stack_manager extensions plan `
   --target C:\path\to\comfyui-portable `
   --catalog C:\path\to\rocm-evidence-matrix\data\catalog.json `
   --candidate <candidate-id>
+python -m rocm_stack_manager extensions apply `
+  --target C:\path\to\comfyui-portable `
+  --catalog C:\path\to\rocm-evidence-matrix\data\catalog.json `
+  --candidate <candidate-id> --extension <extension-id> --apply
+python -m rocm_stack_manager extensions restore `
+  --target C:\path\to\comfyui-portable `
+  --backup C:\path\to\extensions-<timestamp>.json
 python -m rocm_stack_manager inventory `
   --catalog C:\path\to\rocm-evidence-matrix\data\catalog.json `
   --target C:\path\to\comfyui-portable `
@@ -102,6 +109,11 @@ extension installation plan. It emits commands only when the Matrix profile
 contains an exact source, evidence reference, artifact claim, and matching
 platform/Python/GFX/ABI constraints. The current extension profiles are
 unverified and therefore remain blocked from installation.
+`extensions apply` requires both the `apply` action and `--apply`; it creates
+an extension-only backup before running any command. If any selected
+extension is blocked, unverified, conflicting, or missing evidence, the whole
+operation is rejected. `extensions restore` is dry-run by default and never
+prunes unrelated packages.
 The `install` command emits a target-local pip command by default. It never
 executes pip unless `--apply` is explicitly provided, and candidates with failed
 resolver evidence produce an explicit warning requiring `--allow-unverified`.

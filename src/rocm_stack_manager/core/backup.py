@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -29,6 +30,34 @@ class BackupSnapshot:
             "requirements_path": str(self.requirements_path),
             "created_at": self.created_at,
             "requirements": list(self.requirements),
+            "target_root": self.target_root,
+            "python_executable": self.python_executable,
+        }
+
+
+@dataclass(frozen=True)
+class ExtensionBackupSnapshot:
+    """Target-local backup containing only selected extension packages."""
+
+    path: Path
+    requirements_path: Path
+    created_at: str
+    requirements: tuple[str, ...]
+    extension_ids: tuple[str, ...] = ()
+    candidate_id: str | None = None
+    target_root: str | None = None
+    python_executable: str | None = None
+
+    def as_dict(self):
+        return {
+            "kind": "extensions",
+            "schema_version": 1,
+            "path": str(self.path),
+            "requirements_path": str(self.requirements_path),
+            "created_at": self.created_at,
+            "requirements": list(self.requirements),
+            "extension_ids": list(self.extension_ids),
+            "candidate_id": self.candidate_id,
             "target_root": self.target_root,
             "python_executable": self.python_executable,
         }
@@ -96,6 +125,81 @@ def create_backup(target, destination=None, timeout=60):
     )
 
 
+def _normalize_package_name(value):
+    return value.casefold().replace("_", "-").replace(".", "-")
+
+
+def _freeze_package_name(requirement):
+    match = re.match(r"^([A-Za-z0-9_.-]+)\s*==", requirement)
+    return _normalize_package_name(match.group(1)) if match else None
+
+
+def create_extension_backup(
+    target,
+    package_names,
+    *,
+    extension_ids=(),
+    candidate_id=None,
+    destination=None,
+    timeout=60,
+):
+    """Save only selected extension packages from the target interpreter."""
+
+    if target.python_executable is None:
+        raise BackupError("target Python executable was not found")
+    try:
+        completed = subprocess.run(
+            [str(target.python_executable), "-m", "pip", "freeze", "--all"],
+            cwd=str(target.comfyui_dir),
+            env=_clean_environment(target),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise BackupError(f"extension backup failed: {type(error).__name__}: {error}") from error
+    if completed.returncode != 0:
+        error = (completed.stderr or completed.stdout or "pip freeze failed").strip()
+        raise BackupError(error[-1000:])
+
+    selected_names = {_normalize_package_name(str(name)) for name in package_names}
+    requirements = tuple(
+        line
+        for line in completed.stdout.splitlines()
+        if line.strip() and _freeze_package_name(line) in selected_names
+    )
+    created_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    backup_dir = Path(destination) if destination else target.root / ".rocm-stack-manager" / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    filename = "extensions-" + created_at.replace(":", "").replace("-", "") + ".json"
+    path = backup_dir / filename
+    requirements_path = path.with_suffix(".txt")
+    _atomic_write_text(requirements_path, "\n".join(requirements) + ("\n" if requirements else ""))
+    document = {
+        "kind": "extensions",
+        "schema_version": 1,
+        "created_at": created_at,
+        "target_root": str(target.root),
+        "python_executable": str(target.python_executable),
+        "requirements_path": requirements_path.name,
+        "requirements": list(requirements),
+        "extension_ids": list(extension_ids),
+        "candidate_id": candidate_id,
+    }
+    _atomic_write(path, document)
+    return ExtensionBackupSnapshot(
+        path=path,
+        requirements_path=requirements_path,
+        created_at=created_at,
+        requirements=requirements,
+        extension_ids=tuple(extension_ids),
+        candidate_id=candidate_id,
+        target_root=str(target.root),
+        python_executable=str(target.python_executable),
+    )
+
+
 def load_backup(path):
     """Load and validate a JSON package backup."""
 
@@ -124,6 +228,35 @@ def load_backup(path):
         requirements_path=requirements_path,
         created_at=document.get("created_at", ""),
         requirements=requirements,
+        target_root=document.get("target_root"),
+        python_executable=document.get("python_executable"),
+    )
+
+
+def load_extension_backup(path):
+    """Load and validate an extension-only backup."""
+
+    backup_path = Path(path).expanduser().resolve()
+    try:
+        document = json.loads(backup_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise BackupError(f"cannot read extension backup: {backup_path}") from error
+    if document.get("kind") != "extensions":
+        raise BackupError(f"backup is not an extension backup: {backup_path}")
+    requirements = tuple(document.get("requirements") or ())
+    requirements_value = document.get("requirements_path")
+    requirements_path = Path(requirements_value) if requirements_value else backup_path.with_suffix(".txt")
+    if not requirements_path.is_absolute():
+        requirements_path = backup_path.parent / requirements_path
+    if not requirements_path.is_file():
+        _atomic_write_text(requirements_path, "\n".join(requirements) + ("\n" if requirements else ""))
+    return ExtensionBackupSnapshot(
+        path=backup_path,
+        requirements_path=requirements_path,
+        created_at=document.get("created_at", ""),
+        requirements=requirements,
+        extension_ids=tuple(document.get("extension_ids") or ()),
+        candidate_id=document.get("candidate_id"),
         target_root=document.get("target_root"),
         python_executable=document.get("python_executable"),
     )

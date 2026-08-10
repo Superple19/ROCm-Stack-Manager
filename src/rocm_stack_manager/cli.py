@@ -10,6 +10,7 @@ from pathlib import Path
 from .adapters.registry import available_adapters, get_adapter
 from .core.adapter import (
     CapabilityUnavailable,
+    ExtensionInstaller,
     ExtensionProvider,
     PythonPackageAdapter,
 )
@@ -82,12 +83,20 @@ def parse_args(argv=None):
     inventory.add_argument("--candidate", required=True, help="Exact Matrix candidate ID")
     inventory.add_argument("--json", action="store_true", dest="json_output")
 
-    extensions = subparsers.add_parser("extensions", help="Report or plan ComfyUI extensions")
-    extensions.add_argument("action", nargs="?", choices=("report", "plan"), default="report")
+    extensions = subparsers.add_parser("extensions", help="Report, plan, or manage ComfyUI extensions")
+    extensions.add_argument(
+        "action",
+        nargs="?",
+        choices=("report", "plan", "apply", "restore"),
+        default="report",
+    )
     extensions.add_argument("--target", type=Path, required=True, help="Portable root or ComfyUI directory")
     extensions.add_argument("--catalog", type=Path, help="Optional Matrix catalog.json for profile evidence")
     extensions.add_argument("--candidate", help="Optional exact Matrix candidate ID")
     extensions.add_argument("--extension", dest="selections", action="append", default=[])
+    extensions.add_argument("--backup", type=Path, help="Extension backup JSON for restore")
+    extensions.add_argument("--backup-dir", type=Path, help="Optional extension backup directory")
+    extensions.add_argument("--apply", action="store_true", help="Apply or restore after an explicit dry-run")
     _add_adapter_option(extensions)
     extensions.add_argument("--json", action="store_true", dest="json_output")
 
@@ -233,6 +242,26 @@ def main(argv=None):
             return 0
 
         if args.command == "extensions":
+            if args.action == "restore":
+                if not args.backup:
+                    raise BackupError("extensions restore requires --backup")
+                if not isinstance(adapter, ExtensionInstaller):
+                    raise CapabilityUnavailable(
+                        f"adapter does not provide extension restore: {adapter.id}"
+                    )
+                result = adapter.restore_extensions(target, args.backup, args.apply)
+                if args.json_output:
+                    print(json.dumps(result.as_dict(), indent=2, sort_keys=True))
+                else:
+                    print(f"Target: {result.target_root}")
+                    print(f"Command: {subprocess.list2cmdline(result.command) or 'none'}")
+                    print("Mode: applied" if args.apply else "Mode: dry-run (pip was not executed)")
+                    for warning in result.warnings:
+                        print(f"Warning: {warning}")
+                    if getattr(result, "output", ""):
+                        print(result.output.rstrip())
+                return 0
+
             extension_profiles = {}
             catalog = None
             if args.catalog:
@@ -262,6 +291,34 @@ def main(argv=None):
                     ),
                     python_tag,
                 )
+            if args.action == "apply":
+                if not args.apply:
+                    raise InstallationError("extensions apply requires --apply")
+                if candidate is None:
+                    raise CatalogError("extensions apply requires --catalog and --candidate")
+                if not isinstance(adapter, ExtensionInstaller):
+                    raise CapabilityUnavailable(
+                        f"adapter does not provide extension installation: {adapter.id}"
+                    )
+                plan = adapter.extension_plan(
+                    target,
+                    candidate,
+                    tuple(args.selections),
+                    extension_profiles,
+                )
+                backup = adapter.create_extension_backup(target, plan, args.backup_dir)
+                result = adapter.apply_extension_plan(target, plan, backup)
+                if args.json_output:
+                    print(json.dumps(result.as_dict(), indent=2, sort_keys=True))
+                else:
+                    print(f"Target: {result.plan.target_root}")
+                    print(f"Candidate: {candidate['id']}")
+                    print(f"Backup: {result.backup_path}")
+                    print("Mode: applied")
+                    print(f"Return code: {result.returncode}")
+                    if result.output:
+                        print(result.output.rstrip())
+                return 0
             if args.action == "plan":
                 if candidate is None:
                     raise CatalogError("extensions plan requires --catalog and --candidate")

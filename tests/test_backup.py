@@ -4,9 +4,23 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from rocm_stack_manager.core.backup import BackupSnapshot, create_backup, load_backup
+from rocm_stack_manager.core.backup import (
+    BackupSnapshot,
+    ExtensionBackupSnapshot,
+    create_backup,
+    create_extension_backup,
+    load_backup,
+    load_extension_backup,
+)
 from rocm_stack_manager.core.detection import detect_target
-from rocm_stack_manager.core.install import InstallationError, apply_install, apply_restore, build_restore_plan
+from rocm_stack_manager.core.install import (
+    InstallationError,
+    apply_extension_restore,
+    apply_install,
+    apply_restore,
+    build_extension_restore_plan,
+    build_restore_plan,
+)
 from rocm_stack_manager.cli import parse_args
 
 
@@ -159,3 +173,75 @@ class BackupAndApplyTests(unittest.TestCase):
 
         self.assertEqual(args.command, "rollback")
         self.assertFalse(args.apply)
+
+    def test_extension_backup_filters_to_selected_packages(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = self._target(root)
+            completed = type(
+                "Completed",
+                (),
+                {
+                    "returncode": 0,
+                    "stdout": "torch==2.14.0\nbitsandbytes==0.50.0\nsageattention==1.0.6\n",
+                    "stderr": "",
+                },
+            )()
+            with patch("rocm_stack_manager.core.backup.subprocess.run", return_value=completed):
+                backup = create_extension_backup(
+                    target,
+                    ("bitsandbytes",),
+                    extension_ids=("bitsandbytes",),
+                    candidate_id="candidate",
+                    destination=root / "backups",
+                )
+
+            self.assertEqual(backup.requirements, ("bitsandbytes==0.50.0",))
+            document = backup.path.read_text(encoding="utf-8")
+            self.assertIn('"kind": "extensions"', document)
+            self.assertEqual(load_extension_backup(backup.path).extension_ids, ("bitsandbytes",))
+
+    def test_empty_extension_backup_has_no_restore_command(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "extensions.json"
+            requirements = root / "extensions.txt"
+            requirements.write_text("", encoding="utf-8")
+            path.write_text(
+                '{"kind":"extensions","requirements":[],"requirements_path":"extensions.txt"}',
+                encoding="utf-8",
+            )
+            (root / "target").mkdir()
+            target = self._target(root / "target")
+
+            plan = build_extension_restore_plan(target, load_extension_backup(path))
+
+            self.assertEqual(plan.command, ())
+            self.assertTrue(any("nothing to restore" in warning for warning in plan.warnings))
+
+    def test_extension_restore_uses_target_python(self):
+        completed = type("Completed", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "target").mkdir()
+            target = self._target(root / "target")
+            requirements = root / "extensions.txt"
+            requirements.write_text("bitsandbytes==0.50.0\n", encoding="utf-8")
+            backup = ExtensionBackupSnapshot(
+                root / "extensions.json",
+                requirements,
+                "2026-01-01T00:00:00Z",
+                ("bitsandbytes==0.50.0",),
+                target_root=str(target.root),
+            )
+            with patch("rocm_stack_manager.core.install.subprocess.run", return_value=completed) as run:
+                result = apply_extension_restore(target, backup)
+
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual(run.call_args.args[0][0], str(target.python_executable))
+
+    def test_extension_cli_actions_are_explicit(self):
+        args = parse_args(["extensions", "apply", "--target", "target", "--apply"])
+
+        self.assertEqual(args.action, "apply")
+        self.assertTrue(args.apply)
