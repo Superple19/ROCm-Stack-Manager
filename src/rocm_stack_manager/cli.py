@@ -7,12 +7,15 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .adapters.comfyui.detect import detect_comfyui, python_tag_comfyui, verify_comfyui
-from .adapters.comfyui.extensions import build_extension_report
+from .adapters.registry import available_adapters, get_adapter
+from .core.adapter import (
+    CapabilityUnavailable,
+    ExtensionProvider,
+    PythonPackageAdapter,
+)
 from .core.catalog import CatalogError, iter_candidates, load_catalog
 from .core.backup import BackupError, create_backup, load_backup
 from .core.detection import TargetDetectionError
-from .core.inventory import collect_inventory
 from .core.install import (
     InstallationError,
     InstallResult,
@@ -21,7 +24,7 @@ from .core.install import (
     build_restore_plan,
     dry_run_install,
 )
-from .core.planning import PlanningError, build_plan
+from .core.planning import PlanningError
 
 
 def _host_platform():
@@ -37,41 +40,58 @@ def _add_catalog_options(parser):
     parser.add_argument("--rocm", dest="rocm_version", help="Exact ROCm version filter")
 
 
+def _add_adapter_option(parser):
+    parser.add_argument(
+        "--adapter",
+        choices=available_adapters(),
+        default="comfyui",
+        help="Application adapter (default: comfyui)",
+    )
+
+
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(prog="rocm-stack-manager")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     detect = subparsers.add_parser("detect", help="Inspect an existing ComfyUI installation")
     detect.add_argument("--target", type=Path, default=Path("."), help="Portable root or ComfyUI directory")
+    _add_adapter_option(detect)
     detect.add_argument("--json", action="store_true", dest="json_output")
 
     verify = subparsers.add_parser("verify", help="Probe target-local ROCm runtime and GPU")
     verify.add_argument("--target", type=Path, required=True, help="Portable root or ComfyUI directory")
+    _add_adapter_option(verify)
     verify.add_argument("--json", action="store_true", dest="json_output")
 
     candidates = subparsers.add_parser("candidates", help="List Matrix package candidates")
     _add_catalog_options(candidates)
+    _add_adapter_option(candidates)
     candidates.add_argument("--json", action="store_true", dest="json_output")
     candidates.add_argument("--include-unavailable", action="store_true")
     candidates.add_argument("--include-incompatible", action="store_true")
 
     plan = subparsers.add_parser("plan", help="Create a non-mutating installation plan")
     _add_catalog_options(plan)
+    _add_adapter_option(plan)
     plan.add_argument("--candidate", required=True, help="Exact Matrix candidate ID")
     plan.add_argument("--json", action="store_true", dest="json_output")
 
     inventory = subparsers.add_parser("inventory", help="Inspect target-local packages")
     _add_catalog_options(inventory)
+    _add_adapter_option(inventory)
     inventory.add_argument("--candidate", required=True, help="Exact Matrix candidate ID")
     inventory.add_argument("--json", action="store_true", dest="json_output")
 
     extensions = subparsers.add_parser("extensions", help="Report ComfyUI extension compatibility")
     extensions.add_argument("--target", type=Path, required=True, help="Portable root or ComfyUI directory")
     extensions.add_argument("--catalog", type=Path, help="Optional Matrix catalog.json for profile evidence")
+    extensions.add_argument("--candidate", help="Optional exact Matrix candidate ID")
+    _add_adapter_option(extensions)
     extensions.add_argument("--json", action="store_true", dest="json_output")
 
     install = subparsers.add_parser("install", help="Create a target-local package install dry-run")
     _add_catalog_options(install)
+    _add_adapter_option(install)
     install.add_argument("--candidate", required=True, help="Exact Matrix candidate ID")
     install.add_argument("--allow-unverified", action="store_true")
     install.add_argument("--apply", action="store_true", help="Apply after creating a package backup")
@@ -85,6 +105,7 @@ def parse_args(argv=None):
     )
     restore.add_argument("--target", type=Path, required=True, help="Portable root or ComfyUI directory")
     restore.add_argument("--backup", type=Path, required=True, help="Backup JSON created by install --apply")
+    _add_adapter_option(restore)
     restore.add_argument("--apply", action="store_true", help="Apply the restore; default is dry-run")
     restore.add_argument("--json", action="store_true", dest="json_output")
     return parser.parse_args(argv)
@@ -166,12 +187,13 @@ def _print_inventory(inventory, json_output):
 def main(argv=None):
     args = parse_args(argv)
     try:
-        target = detect_comfyui(args.target)
+        adapter = get_adapter(args.adapter)
+        target = adapter.detect(args.target)
         if args.command == "detect":
             _print_target(target, args.json_output)
             return 0
         if args.command == "verify":
-            observation = verify_comfyui(target)
+            observation = adapter.verify(target)
             if args.json_output:
                 print(json.dumps(observation.as_dict(), indent=2, sort_keys=True))
             else:
@@ -210,9 +232,35 @@ def main(argv=None):
 
         if args.command == "extensions":
             extension_profiles = {}
+            catalog = None
             if args.catalog:
-                extension_profiles = load_catalog(args.catalog).get("_comfyui_extension_profiles", {})
-            report = build_extension_report(collect_inventory(target), extension_profiles)
+                catalog = load_catalog(args.catalog)
+                extension_profiles = catalog.get("_comfyui_extension_profiles", {})
+            if not isinstance(adapter, ExtensionProvider):
+                raise CapabilityUnavailable(
+                    f"adapter does not provide ComfyUI extension operations: {adapter.id}"
+                )
+            candidate = None
+            if args.candidate:
+                if catalog is None:
+                    raise CatalogError("--candidate requires --catalog")
+                python_tag = (
+                    adapter.python_tag(target)
+                    if isinstance(adapter, PythonPackageAdapter)
+                    else None
+                )
+                candidate = _candidate_for_plan(
+                    catalog,
+                    argparse.Namespace(
+                        platform=_host_platform(),
+                        gfx=None,
+                        channel=None,
+                        rocm_version=None,
+                        candidate=args.candidate,
+                    ),
+                    python_tag,
+                )
+            report = adapter.extension_inventory(target, candidate, extension_profiles)
             if args.json_output:
                 print(json.dumps(report, indent=2, sort_keys=True))
             else:
@@ -233,7 +281,11 @@ def main(argv=None):
             return 0
 
         catalog = load_catalog(args.catalog)
-        python_tag = python_tag_comfyui(target)
+        if not isinstance(adapter, PythonPackageAdapter):
+            raise CapabilityUnavailable(
+                f"adapter does not provide Python package candidate operations: {adapter.id}"
+            )
+        python_tag = adapter.python_tag(target)
         if args.command == "candidates":
             candidates = iter_candidates(
                 catalog,
@@ -250,7 +302,7 @@ def main(argv=None):
 
         candidate = _candidate_for_plan(catalog, args, python_tag)
         if args.command == "inventory":
-            _print_inventory(collect_inventory(target, candidate), args.json_output)
+            _print_inventory(adapter.inventory(target, candidate), args.json_output)
             return 0
         if args.command == "install":
             if args.apply:
@@ -282,7 +334,7 @@ def main(argv=None):
                 if result.output:
                     print(result.output.rstrip())
             return 0
-        plan = build_plan(target, candidate)
+        plan = adapter.plan(target, candidate)
         if args.json_output:
             print(json.dumps(plan.as_dict(), indent=2, sort_keys=True))
         else:
@@ -298,7 +350,15 @@ def main(argv=None):
                 print(f"Wheel URLs: {len(candidate['wheel_urls'])}")
             print("Mode: dry-run (no files changed)")
         return 0
-    except (TargetDetectionError, CatalogError, PlanningError, InstallationError, BackupError) as error:
+    except (
+        TargetDetectionError,
+        CatalogError,
+        PlanningError,
+        InstallationError,
+        BackupError,
+        CapabilityUnavailable,
+        ValueError,
+    ) as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
 
