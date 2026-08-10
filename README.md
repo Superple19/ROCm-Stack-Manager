@@ -34,39 +34,31 @@ virtual-environment layout:
 python -m rocm_stack_manager detect --target C:\path\to\comfyui-portable
 python -m rocm_stack_manager verify --target C:\path\to\comfyui-portable --json
 python -m rocm_stack_manager extensions `
-  --target C:\path\to\comfyui-portable `
-  --catalog C:\path\to\rocm-evidence-matrix\data\catalog.json
+  --target C:\path\to\comfyui-portable
 python -m rocm_stack_manager extensions plan `
   --target C:\path\to\comfyui-portable `
-  --catalog C:\path\to\rocm-evidence-matrix\data\catalog.json `
   --candidate <candidate-id>
 python -m rocm_stack_manager extensions apply `
   --target C:\path\to\comfyui-portable `
-  --catalog C:\path\to\rocm-evidence-matrix\data\catalog.json `
   --candidate <candidate-id> --extension <extension-id> --apply
 python -m rocm_stack_manager extensions restore `
   --target C:\path\to\comfyui-portable `
   --backup C:\path\to\extensions-<timestamp>.json
 python -m rocm_stack_manager inventory `
-  --catalog C:\path\to\rocm-evidence-matrix\data\catalog.json `
   --target C:\path\to\comfyui-portable `
   --platform windows --gfx gfx1201 `
   --candidate <candidate-id>
 python -m rocm_stack_manager install `
-  --catalog C:\path\to\rocm-evidence-matrix\data\catalog.json `
   --target C:\path\to\comfyui-portable `
   --platform windows --gfx gfx1201 `
   --candidate <candidate-id>
 python -m rocm_stack_manager candidates `
-  --catalog C:\path\to\rocm-evidence-matrix\data\catalog.json `
   --target C:\path\to\comfyui-portable `
   --platform windows --gfx gfx1201 --channel stable
 python -m rocm_stack_manager candidates `
-  --catalog C:\path\to\rocm-evidence-matrix\data\catalog.json `
   --target C:\path\to\comfyui-portable `
   --platform windows --gfx gfx1201 --rocm 7.2.1
 python -m rocm_stack_manager plan `
-  --catalog C:\path\to\rocm-evidence-matrix\data\catalog.json `
   --target C:\path\to\comfyui-portable `
   --platform windows --gfx gfx1201 --candidate <candidate-id>
 python -m rocm_stack_manager restore `
@@ -97,6 +89,15 @@ runtime compatibility.
 The `--rocm` filter includes historical candidates when the Matrix catalog has
 preserved their complete artifact evidence. A historical version is not shown
 as installable merely because a release name exists in documentation.
+When `--catalog` is omitted, the first command that needs Matrix data fetches
+the official generated catalog and referenced evidence files from
+`rocm-evidence-matrix` into a per-user cache. On Windows the default cache is
+`%LOCALAPPDATA%\rocm-stack-manager\matrix`; on Linux it is
+`~/.cache/rocm-stack-manager/matrix` (or `$XDG_CACHE_HOME`). Later commands
+reuse that snapshot. Use `--refresh-catalog` to request a new snapshot, or
+pass `--catalog` for a fully offline local file. `--catalog-url` is available
+for a trusted mirror or a local test server.
+
 The `inventory` command reads installed distributions from the selected target
 Python and classifies them against one candidate. Compiled extensions without
 matching evidence remain `unknown`; they are never assumed compatible.

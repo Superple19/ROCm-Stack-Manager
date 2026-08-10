@@ -33,3 +33,11 @@ class AdapterContractTests(unittest.TestCase):
     def test_cli_defaults_to_comfyui_adapter(self):
         args = parse_args(["detect"])
         self.assertEqual(args.adapter, "comfyui")
+
+    def test_candidate_cli_uses_automatic_catalog_by_default(self):
+        args = parse_args(
+            ["candidates", "--target", "target", "--gfx", "gfx1201"]
+        )
+        self.assertIsNone(args.catalog)
+        self.assertIsNone(args.catalog_url)
+        self.assertFalse(args.refresh_catalog)

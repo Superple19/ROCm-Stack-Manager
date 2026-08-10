@@ -1,7 +1,14 @@
 """Read and filter local ROCm Evidence Matrix catalog snapshots."""
 
 import json
+import hashlib
+import os
 from pathlib import Path
+import shutil
+import tempfile
+from datetime import datetime, timezone
+from urllib.error import URLError, HTTPError
+from urllib.request import Request, urlopen
 from urllib.parse import unquote
 
 from .profile import ProfileError, evaluate_candidate, load_profile
@@ -9,6 +16,133 @@ from .profile import ProfileError, evaluate_candidate, load_profile
 
 class CatalogError(ValueError):
     """Raised when a Matrix catalog cannot be loaded or interpreted."""
+
+
+DEFAULT_MATRIX_RAW_BASE_URL = (
+    "https://raw.githubusercontent.com/Superple19/rocm-evidence-matrix/main"
+)
+_PROFILE_PATHS = (
+    "profiles/comfyui/profile.json",
+    "profiles/comfyui/extensions/bitsandbytes.json",
+    "profiles/comfyui/extensions/flash-attention.json",
+    "profiles/comfyui/extensions/aiter.json",
+    "profiles/comfyui/extensions/sageattention.json",
+    "profiles/comfyui/extensions/triton.json",
+)
+
+
+def default_catalog_cache_dir():
+    """Return the per-user cache directory for the fetched Matrix snapshot."""
+
+    if os.name == "nt":
+        root = os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local")
+    else:
+        root = os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache")
+    return Path(root) / "rocm-stack-manager" / "matrix"
+
+
+def _download_bytes(url, timeout=30):
+    request = Request(url, headers={"User-Agent": "rocm-stack-manager/catalog"})
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            return response.read()
+    except (OSError, HTTPError, URLError) as error:
+        raise CatalogError(f"cannot fetch Matrix catalog source {url}: {error}") from error
+
+
+def _write_bytes_atomic(path, content):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_bytes(content)
+    os.replace(temporary, path)
+
+
+def _safe_relative_path(value):
+    if not isinstance(value, str) or not value:
+        raise CatalogError("Matrix catalog contains an invalid artifact path")
+    relative = Path(value)
+    if relative.is_absolute() or ".." in relative.parts:
+        raise CatalogError(f"Matrix catalog contains an unsafe artifact path: {value}")
+    return relative
+
+
+def ensure_catalog(
+    path=None,
+    *,
+    cache_dir=None,
+    base_url=DEFAULT_MATRIX_RAW_BASE_URL,
+    refresh=False,
+):
+    """Resolve an explicit catalog or fetch the official Matrix snapshot.
+
+    An explicit path never performs network access. When omitted, the first
+    user-triggered catalog command downloads the generated catalog, all files
+    it references, and the ComfyUI profiles into a per-user cache.
+    """
+
+    if path is not None:
+        return Path(path).expanduser().resolve()
+
+    cache_root = Path(cache_dir).expanduser().resolve() if cache_dir else default_catalog_cache_dir()
+    catalog_path = cache_root / "data" / "catalog.json"
+    if catalog_path.is_file() and not refresh:
+        return catalog_path
+
+    base = str(base_url or DEFAULT_MATRIX_RAW_BASE_URL).rstrip("/")
+    staging_parent = cache_root.parent
+    staging_parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix="matrix-", dir=str(staging_parent)))
+    try:
+        catalog_bytes = _download_bytes(f"{base}/data/catalog.json")
+        try:
+            catalog_document = json.loads(catalog_bytes.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise CatalogError("downloaded Matrix catalog is not valid UTF-8 JSON") from error
+        relative_paths = []
+        for artifact in catalog_document.get("artifacts", []):
+            if not isinstance(artifact, dict) or not artifact.get("path"):
+                continue
+            relative_paths.append(_safe_relative_path(artifact["path"]))
+        required_paths = tuple(dict.fromkeys(relative_paths))
+        for relative_path in required_paths:
+            content = _download_bytes(f"{base}/{relative_path.as_posix()}")
+            _write_bytes_atomic(staging / relative_path, content)
+        for relative_path in _PROFILE_PATHS:
+            try:
+                content = _download_bytes(f"{base}/{relative_path}")
+            except CatalogError:
+                continue
+            _write_bytes_atomic(staging / relative_path, content)
+        _write_bytes_atomic(staging / "data" / "catalog.json", catalog_bytes)
+
+        files = sorted(path for path in staging.rglob("*") if path.is_file())
+        catalog_destination = cache_root / "data" / "catalog.json"
+        for source in files:
+            relative = source.relative_to(staging)
+            if relative.as_posix() == "data/catalog.json":
+                continue
+            destination = cache_root / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(source, destination)
+        catalog_destination.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(staging / "data" / "catalog.json", catalog_destination)
+        manifest = {
+            "source": base,
+            "catalog_sha256": hashlib.sha256(catalog_bytes).hexdigest(),
+            "fetched_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "artifact_count": len(required_paths),
+        }
+        _write_bytes_atomic(
+            cache_root / "source-manifest.json",
+            (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8"),
+        )
+        return catalog_destination
+    except CatalogError:
+        raise
+    except OSError as error:
+        raise CatalogError(f"cannot store Matrix catalog cache at {cache_root}: {error}") from error
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
 
 
 def _read_json(path):

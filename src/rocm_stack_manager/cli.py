@@ -14,7 +14,7 @@ from .core.adapter import (
     ExtensionProvider,
     PythonPackageAdapter,
 )
-from .core.catalog import CatalogError, iter_candidates, load_catalog
+from .core.catalog import CatalogError, ensure_catalog, iter_candidates, load_catalog
 from .core.backup import BackupError, create_backup, load_backup
 from .core.detection import TargetDetectionError
 from .core.install import (
@@ -33,7 +33,17 @@ def _host_platform():
 
 
 def _add_catalog_options(parser):
-    parser.add_argument("--catalog", type=Path, required=True, help="Matrix catalog.json or matrix.json")
+    parser.add_argument("--catalog", type=Path, help="Optional local Matrix catalog.json or matrix.json")
+    parser.add_argument(
+        "--catalog-url",
+        default=None,
+        help="Matrix raw repository base URL used when --catalog is omitted",
+    )
+    parser.add_argument(
+        "--refresh-catalog",
+        action="store_true",
+        help="Refresh the cached Matrix catalog before use",
+    )
     parser.add_argument("--target", type=Path, required=True, help="Portable root or ComfyUI directory")
     parser.add_argument("--platform", choices=("windows", "linux"), default=_host_platform())
     parser.add_argument("--gfx", required=True, help="GFX target, for example gfx1201")
@@ -92,6 +102,8 @@ def parse_args(argv=None):
     )
     extensions.add_argument("--target", type=Path, required=True, help="Portable root or ComfyUI directory")
     extensions.add_argument("--catalog", type=Path, help="Optional Matrix catalog.json for profile evidence")
+    extensions.add_argument("--catalog-url", help="Matrix raw repository base URL used when catalog is omitted")
+    extensions.add_argument("--refresh-catalog", action="store_true")
     extensions.add_argument("--candidate", help="Optional exact Matrix candidate ID")
     extensions.add_argument("--extension", dest="selections", action="append", default=[])
     extensions.add_argument("--backup", type=Path, help="Extension backup JSON for restore")
@@ -264,8 +276,14 @@ def main(argv=None):
 
             extension_profiles = {}
             catalog = None
-            if args.catalog:
-                catalog = load_catalog(args.catalog)
+            needs_catalog = bool(args.catalog) or args.action in {"plan", "apply"} or bool(args.candidate)
+            if needs_catalog:
+                catalog_path = ensure_catalog(
+                    args.catalog,
+                    base_url=args.catalog_url,
+                    refresh=args.refresh_catalog,
+                )
+                catalog = load_catalog(catalog_path)
                 extension_profiles = catalog.get("_comfyui_extension_profiles", {})
             if not isinstance(adapter, ExtensionProvider):
                 raise CapabilityUnavailable(
@@ -367,7 +385,12 @@ def main(argv=None):
                     print(f"  Reason: {extension['reason']}")
             return 0
 
-        catalog = load_catalog(args.catalog)
+        catalog_path = ensure_catalog(
+            args.catalog,
+            base_url=args.catalog_url,
+            refresh=args.refresh_catalog,
+        )
+        catalog = load_catalog(catalog_path)
         if not isinstance(adapter, PythonPackageAdapter):
             raise CapabilityUnavailable(
                 f"adapter does not provide Python package candidate operations: {adapter.id}"

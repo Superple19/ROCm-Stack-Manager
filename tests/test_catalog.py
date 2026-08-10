@@ -2,8 +2,15 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from rocm_stack_manager.core.catalog import iter_candidates, load_catalog
+from rocm_stack_manager.core.catalog import (
+    DEFAULT_MATRIX_RAW_BASE_URL,
+    CatalogError,
+    ensure_catalog,
+    iter_candidates,
+    load_catalog,
+)
 from rocm_stack_manager.core.detection import detect_target
 from rocm_stack_manager.core.planning import PlanningError, build_plan
 
@@ -39,6 +46,117 @@ def _matrix():
 
 
 class CatalogTests(unittest.TestCase):
+    def test_automatic_catalog_fetch_populates_cache(self):
+        document = {
+            "artifacts": [{"id": "compatibility_matrix", "path": "data/matrix.json"}],
+            "schema_version": 1,
+        }
+        responses = {
+            "https://matrix.test/data/catalog.json": json.dumps(document).encode("utf-8"),
+            "https://matrix.test/data/matrix.json": json.dumps(_matrix()).encode("utf-8"),
+        }
+
+        def download(url):
+            if url in responses:
+                return responses[url]
+            raise CatalogError(f"optional source missing: {url}")
+
+        with tempfile.TemporaryDirectory() as directory:
+            with patch("rocm_stack_manager.core.catalog._download_bytes", side_effect=download) as fetch:
+                path = ensure_catalog(None, cache_dir=Path(directory) / "cache", base_url="https://matrix.test")
+                first_fetch_count = fetch.call_count
+                cached_again = ensure_catalog(
+                    None,
+                    cache_dir=Path(directory) / "cache",
+                    base_url="https://matrix.test",
+                )
+
+            self.assertEqual(path, cached_again)
+            self.assertTrue(path.is_file())
+            self.assertTrue((path.parent / "matrix.json").is_file())
+            self.assertTrue((path.parents[1] / "source-manifest.json").is_file())
+            self.assertGreaterEqual(first_fetch_count, 2)
+            self.assertEqual(fetch.call_count, first_fetch_count)
+
+    def test_explicit_catalog_never_fetches(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "catalog.json"
+            path.write_text("{}", encoding="utf-8")
+            with patch("rocm_stack_manager.core.catalog._download_bytes") as fetch:
+                resolved = ensure_catalog(path)
+
+            self.assertEqual(resolved, path.resolve())
+            fetch.assert_not_called()
+
+    def test_default_source_is_used_when_base_url_is_none(self):
+        document = {
+            "artifacts": [{"id": "compatibility_matrix", "path": "data/matrix.json"}],
+        }
+        responses = {
+            f"{DEFAULT_MATRIX_RAW_BASE_URL}/data/catalog.json": json.dumps(document).encode("utf-8"),
+            f"{DEFAULT_MATRIX_RAW_BASE_URL}/data/matrix.json": json.dumps(_matrix()).encode("utf-8"),
+        }
+
+        def download(url):
+            if url in responses:
+                return responses[url]
+            raise CatalogError(f"optional source missing: {url}")
+
+        with tempfile.TemporaryDirectory() as directory:
+            with patch(
+                "rocm_stack_manager.core.catalog._download_bytes",
+                side_effect=download,
+            ) as fetch:
+                path = ensure_catalog(
+                    None,
+                    cache_dir=Path(directory) / "cache",
+                    base_url=None,
+                )
+                self.assertTrue(path.is_file())
+                self.assertIn(
+                    f"{DEFAULT_MATRIX_RAW_BASE_URL}/data/catalog.json",
+                    [call.args[0] for call in fetch.call_args_list],
+                )
+
+    def test_refresh_failure_preserves_existing_cache(self):
+        document = {"artifacts": [], "schema_version": 1}
+
+        with tempfile.TemporaryDirectory() as directory:
+            cache_root = Path(directory) / "cache"
+            catalog_path = cache_root / "data" / "catalog.json"
+            catalog_path.parent.mkdir(parents=True)
+            catalog_path.write_text(json.dumps(document), encoding="utf-8")
+            with patch(
+                "rocm_stack_manager.core.catalog._download_bytes",
+                side_effect=CatalogError("temporary network failure"),
+            ):
+                with self.assertRaises(CatalogError):
+                    ensure_catalog(None, cache_dir=cache_root, refresh=True)
+
+            self.assertEqual(json.loads(catalog_path.read_text(encoding="utf-8")), document)
+
+    def test_rejects_catalog_path_traversal(self):
+        document = {"artifacts": [{"id": "bad", "path": "../outside.json"}]}
+
+        with tempfile.TemporaryDirectory() as directory:
+            responses = {
+                "https://matrix.test/data/catalog.json": json.dumps(document).encode("utf-8"),
+            }
+
+            def download(url):
+                return responses[url]
+
+            with patch(
+                "rocm_stack_manager.core.catalog._download_bytes",
+                side_effect=download,
+            ):
+                with self.assertRaises(CatalogError):
+                    ensure_catalog(
+                        None,
+                        cache_dir=Path(directory) / "cache",
+                        base_url="https://matrix.test",
+                    )
+
     def test_loads_matrix_from_catalog_index(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
