@@ -9,6 +9,7 @@ The first command detects an existing portable or virtual-environment layout:
 
 ```powershell
 python -m rocm_stack_manager detect --target C:\path\to\comfyui-portable
+python -m rocm_stack_manager verify --target C:\path\to\comfyui-portable --json
 python -m rocm_stack_manager candidates `
   --catalog C:\path\to\rocm-evidence-matrix\data\catalog.json `
   --target C:\path\to\comfyui-portable `
@@ -27,6 +28,9 @@ This repository is independent of the ComfyUI source tree. It does not bundle
 ComfyUI, ROCm, PyTorch, or third-party wheels. The `candidates` and `plan`
 commands are read-only: they consume a local Matrix catalog and produce a
 dry-run plan without changing the target environment.
+The `verify` command executes only the selected target's Python interpreter. It
+does not call a globally installed ROCm executable; host GPU state is reported
+separately from target-local Torch, HIP, and ROCm package metadata.
 
 ## Repository layout
 

@@ -38,3 +38,16 @@ class TargetDetectionTests(unittest.TestCase):
             self.assertEqual(target.root, root.resolve())
             self.assertEqual(target.layout, "venv")
             self.assertEqual(target.python_executable, python.resolve())
+
+    def test_accepts_python_env_root_interpreter(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "main.py").write_text("", encoding="utf-8")
+            python = root / "python_env" / "python.exe"
+            python.parent.mkdir()
+            python.write_text("", encoding="utf-8")
+
+            target = detect_target(root)
+
+            self.assertEqual(target.layout, "venv")
+            self.assertEqual(target.python_executable, python.resolve())

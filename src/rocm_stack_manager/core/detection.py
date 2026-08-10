@@ -55,6 +55,7 @@ def _python_candidates(root: Path, comfyui_dir: Path):
         ("python_embeded", "python.exe"),
         ("python_embedded", "python.exe"),
         ("python", "python.exe"),
+        ("python_env", "python.exe"),
         ("venv", "Scripts", "python.exe"),
         (".venv", "Scripts", "python.exe"),
         ("python_env", "Scripts", "python.exe"),

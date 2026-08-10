@@ -6,7 +6,7 @@ import os
 import sys
 from pathlib import Path
 
-from .adapters.comfyui.detect import detect_comfyui
+from .adapters.comfyui.detect import detect_comfyui, verify_comfyui
 from .core.catalog import CatalogError, iter_candidates, load_catalog
 from .core.detection import TargetDetectionError
 from .core.planning import PlanningError, build_plan
@@ -31,6 +31,10 @@ def parse_args(argv=None):
     detect = subparsers.add_parser("detect", help="Inspect an existing ComfyUI installation")
     detect.add_argument("--target", type=Path, default=Path("."), help="Portable root or ComfyUI directory")
     detect.add_argument("--json", action="store_true", dest="json_output")
+
+    verify = subparsers.add_parser("verify", help="Probe target-local ROCm runtime and GPU")
+    verify.add_argument("--target", type=Path, required=True, help="Portable root or ComfyUI directory")
+    verify.add_argument("--json", action="store_true", dest="json_output")
 
     candidates = subparsers.add_parser("candidates", help="List Matrix package candidates")
     _add_catalog_options(candidates)
@@ -90,6 +94,22 @@ def main(argv=None):
         target = detect_comfyui(args.target)
         if args.command == "detect":
             _print_target(target, args.json_output)
+            return 0
+        if args.command == "verify":
+            observation = verify_comfyui(target)
+            if args.json_output:
+                print(json.dumps(observation.as_dict(), indent=2, sort_keys=True))
+            else:
+                values = observation.as_dict()
+                print(f"Target: {values['target_root']}")
+                print(f"Runtime scope: {values['runtime_scope']}")
+                print(f"Runtime: {values['runtime_status']}")
+                print(f"Hardware: {values['hardware_status']}")
+                print(f"Torch: {values['torch_version'] or 'not detected'}")
+                print(f"Torch ROCm tag: {values['torch_rocm_tag'] or 'not detected'}")
+                print(f"HIP: {values['hip_version'] or 'not detected'}")
+                print(f"ROCm packages: {', '.join(values['rocm_packages']) or 'not detected'}")
+                print(f"Devices: {values['device_count']}")
             return 0
 
         catalog = load_catalog(args.catalog)
