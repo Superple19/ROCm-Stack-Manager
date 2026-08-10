@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rocm-stack-manager"
+version = "0.1.0"
+description = "Manage ROCm application environments without assuming a fixed installation path."
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+rocm-stack-manager = "rocm_stack_manager.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
