@@ -11,12 +11,16 @@ class InstallPlan:
     target_root: Path
     candidate: dict
     extensions: tuple[str, ...] = field(default_factory=tuple)
+    command: tuple[str, ...] = field(default_factory=tuple)
+    warnings: tuple[str, ...] = field(default_factory=tuple)
 
     def as_dict(self):
         return {
             "target_root": str(self.target_root),
             "candidate": self.candidate,
             "extensions": list(self.extensions),
+            "command": list(self.command),
+            "warnings": list(self.warnings),
         }
 
 

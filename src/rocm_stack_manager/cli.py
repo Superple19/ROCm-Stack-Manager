@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from .adapters.comfyui.detect import detect_comfyui, python_tag_comfyui, verify_
 from .core.catalog import CatalogError, iter_candidates, load_catalog
 from .core.detection import TargetDetectionError
 from .core.inventory import collect_inventory
+from .core.install import dry_run_install
 from .core.planning import PlanningError, build_plan
 
 
@@ -53,6 +55,12 @@ def parse_args(argv=None):
     _add_catalog_options(inventory)
     inventory.add_argument("--candidate", required=True, help="Exact Matrix candidate ID")
     inventory.add_argument("--json", action="store_true", dest="json_output")
+
+    install = subparsers.add_parser("install", help="Create a target-local package install dry-run")
+    _add_catalog_options(install)
+    install.add_argument("--candidate", required=True, help="Exact Matrix candidate ID")
+    install.add_argument("--allow-unverified", action="store_true")
+    install.add_argument("--json", action="store_true", dest="json_output")
     return parser.parse_args(argv)
 
 
@@ -160,6 +168,19 @@ def main(argv=None):
         candidate = _candidate_for_plan(catalog, args, python_tag)
         if args.command == "inventory":
             _print_inventory(collect_inventory(target, candidate), args.json_output)
+            return 0
+        if args.command == "install":
+            result = dry_run_install(target, candidate, allow_unverified=args.allow_unverified)
+            if args.json_output:
+                print(json.dumps(result.as_dict(), indent=2, sort_keys=True))
+            else:
+                print(f"Target: {result.plan.target_root}")
+                print(f"Candidate: {candidate['id']}")
+                print(f"Distribution: {candidate['distribution_family']}")
+                print(f"Command: {subprocess.list2cmdline(result.plan.command)}")
+                print("Mode: dry-run (pip was not executed)")
+                for warning in result.plan.warnings:
+                    print(f"Warning: {warning}")
             return 0
         plan = build_plan(target, candidate)
         if args.json_output:

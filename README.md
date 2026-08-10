@@ -15,6 +15,11 @@ python -m rocm_stack_manager inventory `
   --target C:\path\to\comfyui-portable `
   --platform windows --gfx gfx1201 `
   --candidate <candidate-id>
+python -m rocm_stack_manager install `
+  --catalog C:\path\to\rocm-evidence-matrix\data\catalog.json `
+  --target C:\path\to\comfyui-portable `
+  --platform windows --gfx gfx1201 `
+  --candidate <candidate-id>
 python -m rocm_stack_manager candidates `
   --catalog C:\path\to\rocm-evidence-matrix\data\catalog.json `
   --target C:\path\to\comfyui-portable `
@@ -46,6 +51,9 @@ as installable merely because a release name exists in documentation.
 The `inventory` command reads installed distributions from the selected target
 Python and classifies them against one candidate. Compiled extensions without
 matching evidence remain `unknown`; they are never assumed compatible.
+The `install` command currently only emits a target-local pip command. It never
+executes pip, and candidates with failed resolver evidence produce an explicit
+warning requiring `--allow-unverified` for a future apply operation.
 The `verify` command executes only the selected target's Python interpreter. It
 does not call a globally installed ROCm executable; host GPU state is reported
 separately from target-local Torch, HIP, and ROCm package metadata.

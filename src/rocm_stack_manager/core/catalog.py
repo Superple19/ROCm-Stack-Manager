@@ -110,6 +110,24 @@ def _candidate_from_channel(target, platform, channel, details, catalog, python_
     torch_version = details.get("torch_device_version")
     torchvision_version = details.get("torchvision_device_version")
     available = bool(details.get("all_device_packages_available"))
+    source_id = details.get("source_id")
+    source = (catalog.get("sources") or {}).get(source_id, {})
+    package_specs = []
+    for package_name, version in (
+        ("rocm", rocm_version),
+        ("torch", torch_version),
+        ("torchvision", torchvision_version),
+    ):
+        if version:
+            package_specs.append(f"{package_name}=={version}")
+    if target["gfx"] and rocm_version and torch_version and torchvision_version:
+        package_specs.extend(
+            (
+                f"rocm-sdk-device-{target['gfx']}=={rocm_version}",
+                f"amd-torch-device-{target['gfx']}=={torch_version}",
+                f"amd-torchvision-device-{target['gfx']}=={torchvision_version}",
+            )
+        )
     return {
         "id": _candidate_id(platform, channel, target["gfx"], rocm_version, torch_version),
         "distribution_family": "therock",
@@ -119,7 +137,9 @@ def _candidate_from_channel(target, platform, channel, details, catalog, python_
         "rocm_version": rocm_version,
         "torch_version": torch_version,
         "torchvision_version": torchvision_version,
-        "source_id": details.get("source_id"),
+        "source_id": source_id,
+        "index_url": source.get("url"),
+        "package_specs": package_specs,
         "artifact_available": available,
         "status": "artifact_available" if available else "artifact_unavailable",
         "lifecycle": "current",
@@ -159,6 +179,7 @@ def _historical_candidate(candidate, gfx, python_tag):
         "python_compatibility": python_compatibility,
         "resolver_status": evidence_status.get("resolver", "not_collected"),
         "wheel_urls": list(candidate.get("wheel_urls") or []),
+        "package_specs": [],
     }
 
 
