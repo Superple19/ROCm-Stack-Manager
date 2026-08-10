@@ -50,9 +50,10 @@ def load_catalog(path):
     if not isinstance(matrix.get("targets"), list):
         raise CatalogError(f"compatibility matrix has no targets: {matrix_path}")
     matrix["_package_snapshots"] = {}
+    matrix["_historical_candidates"] = []
     for artifact in artifacts:
         artifact_id = artifact.get("id", "")
-        if not artifact_id.startswith("package_snapshots:") or not artifact.get("path"):
+        if not artifact.get("path"):
             continue
         artifact_path_candidates = [catalog_path.parent / Path(artifact["path"])]
         if catalog_path.parent.name == "data":
@@ -62,7 +63,11 @@ def load_catalog(path):
             None,
         )
         if artifact_path:
-            matrix["_package_snapshots"][artifact_id] = _read_json(artifact_path)
+            document = _read_json(artifact_path)
+            if artifact_id.startswith("package_snapshots:"):
+                matrix["_package_snapshots"][artifact_id] = document
+            elif artifact_id == "package_history":
+                matrix["_historical_candidates"] = document.get("candidates", [])
     return matrix
 
 
@@ -117,8 +122,43 @@ def _candidate_from_channel(target, platform, channel, details, catalog, python_
         "source_id": details.get("source_id"),
         "artifact_available": available,
         "status": "artifact_available" if available else "artifact_unavailable",
+        "lifecycle": "current",
         "python_tag": python_tag,
         "python_compatibility": _python_compatibility(catalog, platform, channel, target["gfx"], python_tag),
+    }
+
+
+def _historical_candidate(candidate, gfx, python_tag):
+    gfx_targets = set(candidate.get("available_gfx_targets") or candidate.get("gfx_targets") or [])
+    if gfx not in gfx_targets:
+        return None
+    python_tags = set(candidate.get("python_tags") or [])
+    if not python_tag:
+        python_compatibility = "unknown"
+    elif not python_tags:
+        python_compatibility = "unknown"
+    else:
+        python_compatibility = "compatible" if python_tag in python_tags else "incompatible"
+    artifact_available = bool(candidate.get("artifact_available"))
+    evidence_status = candidate.get("evidence_status") or {}
+    return {
+        "id": candidate.get("id"),
+        "distribution_family": candidate.get("distribution_family", "legacy"),
+        "platform": candidate.get("platform"),
+        "channel": candidate.get("channel"),
+        "gfx": gfx,
+        "rocm_version": candidate.get("rocm_version"),
+        "torch_version": candidate.get("torch_version"),
+        "torchvision_version": candidate.get("torchvision_version"),
+        "torchaudio_version": candidate.get("torchaudio_version"),
+        "source_id": candidate.get("source_id"),
+        "artifact_available": artifact_available,
+        "status": "artifact_available" if artifact_available else "artifact_unavailable",
+        "lifecycle": candidate.get("lifecycle", "historical"),
+        "python_tag": python_tag,
+        "python_compatibility": python_compatibility,
+        "resolver_status": evidence_status.get("resolver", "not_collected"),
+        "wheel_urls": list(candidate.get("wheel_urls") or []),
     }
 
 
@@ -128,6 +168,7 @@ def iter_candidates(
     platform,
     gfx=None,
     channel=None,
+    rocm_version=None,
     python_tag=None,
     include_unavailable=False,
     include_incompatible=False,
@@ -152,6 +193,8 @@ def iter_candidates(
         for channel_name, details in channels.items():
             if channel and channel_name != channel:
                 continue
+            if rocm_version and (details or {}).get("rocm_device_version") != rocm_version:
+                continue
             candidate = _candidate_from_channel(
                 target, platform, channel_name, details or {}, catalog, python_tag
             )
@@ -160,10 +203,28 @@ def iter_candidates(
                 and (include_incompatible or candidate["python_compatibility"] != "incompatible")
             ):
                 candidates.append(candidate)
+    for historical in catalog.get("_historical_candidates", []):
+        if historical.get("platform") != platform:
+            continue
+        if channel and historical.get("channel") != channel:
+            continue
+        if rocm_version and historical.get("rocm_version") != rocm_version:
+            continue
+        if not gfx:
+            continue
+        candidate = _historical_candidate(historical, gfx, python_tag)
+        if not candidate:
+            continue
+        if (
+            (include_unavailable or candidate["artifact_available"])
+            and (include_incompatible or candidate["python_compatibility"] != "incompatible")
+        ):
+            candidates.append(candidate)
     return sorted(
         candidates,
         key=lambda item: (
             item["gfx"],
+            0 if item.get("lifecycle") == "current" else 1,
             {"stable": 0, "nightly": 1, "staging": 2}.get(item["channel"], 9),
             item["rocm_version"] or "",
             item["torch_version"] or "",

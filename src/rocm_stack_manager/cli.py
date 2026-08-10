@@ -23,6 +23,7 @@ def _add_catalog_options(parser):
     parser.add_argument("--platform", choices=("windows", "linux"), default=_host_platform())
     parser.add_argument("--gfx", required=True, help="GFX target, for example gfx1201")
     parser.add_argument("--channel", choices=("stable", "nightly", "staging"))
+    parser.add_argument("--rocm", dest="rocm_version", help="Exact ROCm version filter")
 
 
 def parse_args(argv=None):
@@ -75,10 +76,13 @@ def _print_candidates(candidates, json_output):
         print("No matching candidates.")
         return
     for candidate in candidates:
+        resolver = candidate.get("resolver_status")
+        resolver_text = f" | Resolver {resolver}" if resolver else ""
         print(
             f"{candidate['id']} | {candidate['rocm_version'] or 'unknown'} | "
             f"Torch {candidate['torch_version'] or 'unknown'} | "
-            f"Python {candidate['python_compatibility']} | {candidate['status']}"
+            f"Python {candidate['python_compatibility']} | "
+            f"{candidate['distribution_family']} | {candidate['status']}{resolver_text}"
         )
 
 
@@ -88,6 +92,7 @@ def _candidate_for_plan(catalog, args, python_tag):
         platform=args.platform,
         gfx=args.gfx,
         channel=args.channel,
+        rocm_version=args.rocm_version,
         python_tag=python_tag,
         include_unavailable=True,
         include_incompatible=True,
@@ -144,6 +149,7 @@ def main(argv=None):
                 platform=args.platform,
                 gfx=args.gfx,
                 channel=args.channel,
+                rocm_version=args.rocm_version,
                 python_tag=python_tag,
                 include_unavailable=args.include_unavailable,
                 include_incompatible=args.include_incompatible,
@@ -162,8 +168,13 @@ def main(argv=None):
             print(f"Target: {plan.target_root}")
             print(f"Candidate: {candidate['id']}")
             print(f"Platform/GFX: {candidate['platform']} / {candidate['gfx']}")
+            print(f"Distribution: {candidate['distribution_family']}")
             print(f"ROCm: {candidate['rocm_version']}")
             print(f"Torch: {candidate['torch_version']}")
+            if candidate.get("resolver_status"):
+                print(f"Resolver evidence: {candidate['resolver_status']}")
+            if candidate.get("wheel_urls"):
+                print(f"Wheel URLs: {len(candidate['wheel_urls'])}")
             print("Mode: dry-run (no files changed)")
         return 0
     except (TargetDetectionError, CatalogError, PlanningError) as error:

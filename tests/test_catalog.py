@@ -95,6 +95,38 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(incompatible, [])
         self.assertEqual(visible_incompatible[0]["python_compatibility"], "incompatible")
 
+    def test_exposes_historical_candidate_by_exact_rocm_version(self):
+        catalog = _matrix()
+        catalog["_historical_candidates"] = [
+            {
+                "id": "legacy:stable:7.2.1:gfx1201",
+                "distribution_family": "legacy",
+                "platform": "windows",
+                "channel": "stable",
+                "rocm_version": "7.2.1",
+                "torch_version": "2.9.1+rocm7.2.1",
+                "torchvision_version": "0.24.1+rocm7.2.1",
+                "torchaudio_version": "2.9.1+rocm7.2.1",
+                "python_tags": ["cp312"],
+                "available_gfx_targets": ["gfx1201"],
+                "artifact_available": True,
+                "wheel_urls": ["https://example.test/torch.whl"],
+            }
+        ]
+
+        candidates = iter_candidates(
+            catalog,
+            platform="windows",
+            gfx="gfx1201",
+            rocm_version="7.2.1",
+            python_tag="cp312",
+        )
+
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]["distribution_family"], "legacy")
+        self.assertEqual(candidates[0]["python_compatibility"], "compatible")
+        self.assertEqual(candidates[0]["wheel_urls"], ["https://example.test/torch.whl"])
+
     def test_plan_rejects_unavailable_candidate(self):
         candidate = iter_candidates(
             _matrix(), platform="windows", gfx="gfx1201", include_unavailable=True, channel="nightly"

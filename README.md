@@ -19,6 +19,10 @@ python -m rocm_stack_manager candidates `
   --catalog C:\path\to\rocm-evidence-matrix\data\catalog.json `
   --target C:\path\to\comfyui-portable `
   --platform windows --gfx gfx1201 --channel stable
+python -m rocm_stack_manager candidates `
+  --catalog C:\path\to\rocm-evidence-matrix\data\catalog.json `
+  --target C:\path\to\comfyui-portable `
+  --platform windows --gfx gfx1201 --rocm 7.2.1
 python -m rocm_stack_manager plan `
   --catalog C:\path\to\rocm-evidence-matrix\data\catalog.json `
   --target C:\path\to\comfyui-portable `
@@ -36,6 +40,9 @@ dry-run plan without changing the target environment.
 Candidate listing reads the selected interpreter's CPython tag and excludes
 artifact candidates whose recorded wheel tags do not support it. Missing ABI
 evidence remains explicitly marked as `unknown`.
+The `--rocm` filter includes historical candidates when the Matrix catalog has
+preserved their complete artifact evidence. A historical version is not shown
+as installable merely because a release name exists in documentation.
 The `inventory` command reads installed distributions from the selected target
 Python and classifies them against one candidate. Compiled extensions without
 matching evidence remain `unknown`; they are never assumed compatible.
