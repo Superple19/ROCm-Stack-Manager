@@ -31,4 +31,8 @@ def build_plan(target, candidate, extensions=()):
         raise PlanningError(
             f"candidate is not artifact-available: {candidate.get('id', 'unknown')}"
         )
+    if candidate.get("python_compatibility") == "incompatible":
+        raise PlanningError(
+            f"candidate is incompatible with target Python: {candidate.get('id', 'unknown')}"
+        )
     return InstallPlan(target_root=target.root, candidate=candidate, extensions=tuple(extensions))

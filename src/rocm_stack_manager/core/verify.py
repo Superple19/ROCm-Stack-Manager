@@ -122,6 +122,36 @@ def _clean_environment(target):
     return environment
 
 
+def target_python_tag(target, timeout=10):
+    """Return the selected interpreter's CPython wheel tag when available."""
+
+    if target.python_executable is None:
+        return None
+    try:
+        completed = subprocess.run(
+            [
+                str(target.python_executable),
+                "-c",
+                "import sys; print(f'cp{sys.version_info.major}{sys.version_info.minor}')",
+            ],
+            cwd=str(target.comfyui_dir),
+            env=_clean_environment(target),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if completed.returncode != 0:
+        return None
+    for line in reversed(completed.stdout.splitlines()):
+        value = line.strip()
+        if value.startswith("cp") and value[2:].isdigit():
+            return value
+    return None
+
+
 def _parse_probe_output(output):
     try:
         return json.loads(output)

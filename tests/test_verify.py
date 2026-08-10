@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from rocm_stack_manager.core.detection import detect_target
-from rocm_stack_manager.core.verify import probe_target
+from rocm_stack_manager.core.verify import probe_target, target_python_tag
 
 
 class RuntimeProbeTests(unittest.TestCase):
@@ -55,3 +55,10 @@ class RuntimeProbeTests(unittest.TestCase):
             self.assertEqual(observation.runtime_status, "not_detected")
             self.assertEqual(observation.hardware_status, "not_detected")
             self.assertIn("target Python", observation.error)
+
+    def test_reads_python_tag_from_target_interpreter(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = self._target(Path(directory))
+            completed = type("Completed", (), {"returncode": 0, "stdout": "cp312\n", "stderr": ""})()
+            with patch("rocm_stack_manager.core.verify.subprocess.run", return_value=completed):
+                self.assertEqual(target_python_tag(target), "cp312")

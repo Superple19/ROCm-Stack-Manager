@@ -61,6 +61,40 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(candidates[0]["channel"], "stable")
         self.assertTrue(candidates[0]["id"].startswith("therock:windows:stable:gfx1201:"))
 
+    def test_filters_candidates_by_target_python_tag(self):
+        catalog = _matrix()
+        catalog["_package_snapshots"] = {
+            "package_snapshots:stable": {
+                "packages": {
+                    name: [
+                        {"python_tag": "cp312", "platform_tag": "win_amd64"},
+                    ]
+                    for name in (
+                        "torch",
+                        "torchvision",
+                        "amd-torch-device-gfx1201",
+                        "amd-torchvision-device-gfx1201",
+                        "rocm-sdk-device-gfx1201",
+                    )
+                }
+            }
+        }
+
+        compatible = iter_candidates(catalog, platform="windows", gfx="gfx1201", python_tag="cp312")
+        incompatible = iter_candidates(catalog, platform="windows", gfx="gfx1201", python_tag="cp311")
+        visible_incompatible = iter_candidates(
+            catalog,
+            platform="windows",
+            gfx="gfx1201",
+            python_tag="cp311",
+            include_incompatible=True,
+        )
+
+        self.assertEqual(len(compatible), 1)
+        self.assertEqual(compatible[0]["python_compatibility"], "compatible")
+        self.assertEqual(incompatible, [])
+        self.assertEqual(visible_incompatible[0]["python_compatibility"], "incompatible")
+
     def test_plan_rejects_unavailable_candidate(self):
         candidate = iter_candidates(
             _matrix(), platform="windows", gfx="gfx1201", include_unavailable=True, channel="nightly"

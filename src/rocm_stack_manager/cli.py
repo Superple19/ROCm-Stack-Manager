@@ -6,7 +6,7 @@ import os
 import sys
 from pathlib import Path
 
-from .adapters.comfyui.detect import detect_comfyui, verify_comfyui
+from .adapters.comfyui.detect import detect_comfyui, python_tag_comfyui, verify_comfyui
 from .core.catalog import CatalogError, iter_candidates, load_catalog
 from .core.detection import TargetDetectionError
 from .core.planning import PlanningError, build_plan
@@ -40,6 +40,7 @@ def parse_args(argv=None):
     _add_catalog_options(candidates)
     candidates.add_argument("--json", action="store_true", dest="json_output")
     candidates.add_argument("--include-unavailable", action="store_true")
+    candidates.add_argument("--include-incompatible", action="store_true")
 
     plan = subparsers.add_parser("plan", help="Create a non-mutating installation plan")
     _add_catalog_options(plan)
@@ -70,17 +71,20 @@ def _print_candidates(candidates, json_output):
     for candidate in candidates:
         print(
             f"{candidate['id']} | {candidate['rocm_version'] or 'unknown'} | "
-            f"Torch {candidate['torch_version'] or 'unknown'} | {candidate['status']}"
+            f"Torch {candidate['torch_version'] or 'unknown'} | "
+            f"Python {candidate['python_compatibility']} | {candidate['status']}"
         )
 
 
-def _candidate_for_plan(catalog, args):
+def _candidate_for_plan(catalog, args, python_tag):
     candidates = iter_candidates(
         catalog,
         platform=args.platform,
         gfx=args.gfx,
         channel=args.channel,
+        python_tag=python_tag,
         include_unavailable=True,
+        include_incompatible=True,
     )
     for candidate in candidates:
         if candidate["id"] == args.candidate:
@@ -113,18 +117,21 @@ def main(argv=None):
             return 0
 
         catalog = load_catalog(args.catalog)
+        python_tag = python_tag_comfyui(target)
         if args.command == "candidates":
             candidates = iter_candidates(
                 catalog,
                 platform=args.platform,
                 gfx=args.gfx,
                 channel=args.channel,
+                python_tag=python_tag,
                 include_unavailable=args.include_unavailable,
+                include_incompatible=args.include_incompatible,
             )
             _print_candidates(candidates, args.json_output)
             return 0
 
-        candidate = _candidate_for_plan(catalog, args)
+        candidate = _candidate_for_plan(catalog, args, python_tag)
         plan = build_plan(target, candidate)
         if args.json_output:
             print(json.dumps(plan.as_dict(), indent=2, sort_keys=True))

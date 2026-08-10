@@ -49,6 +49,20 @@ def load_catalog(path):
     matrix = _read_json(matrix_path)
     if not isinstance(matrix.get("targets"), list):
         raise CatalogError(f"compatibility matrix has no targets: {matrix_path}")
+    matrix["_package_snapshots"] = {}
+    for artifact in artifacts:
+        artifact_id = artifact.get("id", "")
+        if not artifact_id.startswith("package_snapshots:") or not artifact.get("path"):
+            continue
+        artifact_path_candidates = [catalog_path.parent / Path(artifact["path"])]
+        if catalog_path.parent.name == "data":
+            artifact_path_candidates.append(catalog_path.parent.parent / Path(artifact["path"]))
+        artifact_path = next(
+            (candidate.resolve() for candidate in artifact_path_candidates if candidate.is_file()),
+            None,
+        )
+        if artifact_path:
+            matrix["_package_snapshots"][artifact_id] = _read_json(artifact_path)
     return matrix
 
 
@@ -57,7 +71,36 @@ def _candidate_id(platform, channel, gfx, rocm_version, torch_version):
     return "therock:" + ":".join(str(value).replace(":", "_") for value in values)
 
 
-def _candidate_from_channel(target, platform, channel, details):
+def _python_compatibility(catalog, platform, channel, gfx, python_tag):
+    if not python_tag:
+        return "unknown"
+    source_id = f"packages-{channel}" + ("-linux" if platform == "linux" else "")
+    snapshot = catalog.get("_package_snapshots", {}).get(f"package_snapshots:{source_id.removeprefix('packages-')}")
+    if not snapshot:
+        return "unknown"
+    package_names = ("torch", "torchvision", f"amd-torch-device-{gfx}", f"amd-torchvision-device-{gfx}", f"rocm-sdk-device-{gfx}")
+    package_results = []
+    platform_tag = "win_amd64" if platform == "windows" else "linux_x86_64"
+    for package_name in package_names:
+        artifacts = snapshot.get("packages", {}).get(package_name)
+        if artifacts is None:
+            continue
+        if not artifacts:
+            package_results.append(False)
+            continue
+        package_results.append(
+            any(
+                item.get("python_tag") in {python_tag, "py3", "source"}
+                and item.get("platform_tag") in {platform_tag, "any", "source"}
+                for item in artifacts
+            )
+        )
+    if not package_results:
+        return "unknown"
+    return "compatible" if all(package_results) else "incompatible"
+
+
+def _candidate_from_channel(target, platform, channel, details, catalog, python_tag):
     rocm_version = details.get("rocm_device_version")
     torch_version = details.get("torch_device_version")
     torchvision_version = details.get("torchvision_device_version")
@@ -74,10 +117,21 @@ def _candidate_from_channel(target, platform, channel, details):
         "source_id": details.get("source_id"),
         "artifact_available": available,
         "status": "artifact_available" if available else "artifact_unavailable",
+        "python_tag": python_tag,
+        "python_compatibility": _python_compatibility(catalog, platform, channel, target["gfx"], python_tag),
     }
 
 
-def iter_candidates(catalog, *, platform, gfx=None, channel=None, include_unavailable=False):
+def iter_candidates(
+    catalog,
+    *,
+    platform,
+    gfx=None,
+    channel=None,
+    python_tag=None,
+    include_unavailable=False,
+    include_incompatible=False,
+):
     """Return install candidates for one platform and optional filters.
 
     The Matrix records package channels either under a platform or, in older
@@ -98,8 +152,13 @@ def iter_candidates(catalog, *, platform, gfx=None, channel=None, include_unavai
         for channel_name, details in channels.items():
             if channel and channel_name != channel:
                 continue
-            candidate = _candidate_from_channel(target, platform, channel_name, details or {})
-            if include_unavailable or candidate["artifact_available"]:
+            candidate = _candidate_from_channel(
+                target, platform, channel_name, details or {}, catalog, python_tag
+            )
+            if (
+                (include_unavailable or candidate["artifact_available"])
+                and (include_incompatible or candidate["python_compatibility"] != "incompatible")
+            ):
                 candidates.append(candidate)
     return sorted(
         candidates,
