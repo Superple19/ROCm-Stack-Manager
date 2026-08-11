@@ -244,6 +244,13 @@ def _print_inventory(inventory, json_output):
         print(f"{package['name']}=={package['version']} | {package['status']} | {package['reason']}")
 
 
+def _summarize_values(values, limit=3):
+    values = [str(value) for value in values if value]
+    if len(values) <= limit:
+        return ", ".join(values) or "none"
+    return f"{', '.join(values[:limit])} (+{len(values) - limit} more)"
+
+
 def main(argv=None):
     args = parse_args(argv)
     try:
@@ -480,6 +487,13 @@ def main(argv=None):
                             f"  Matrix profile: {extension['matrix_profile_id']} | "
                             f"claim={extension['matrix_claim_status']}"
                         )
+                    versions = _summarize_values(extension.get("available_versions") or ())
+                    if not extension.get("available_versions"):
+                        versions = "not collected"
+                    target_match = extension.get("target_match") or "unknown"
+                    evidence = _summarize_values(extension.get("catalog_evidence_refs") or ())
+                    print(f"  Matrix artifacts: {versions} | target={target_match}")
+                    print(f"  Evidence: {evidence}")
                     print(f"  Reason: {extension['reason']}")
             return 0
 

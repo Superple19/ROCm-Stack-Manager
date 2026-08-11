@@ -80,6 +80,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(result, 0)
             self.assertEqual(error.getvalue(), "")
             self.assertIn("Mode: local inventory only", output.getvalue())
+            self.assertIn("Matrix artifacts: not collected", output.getvalue())
             self.assertIn("not installed", output.getvalue())
 
 
