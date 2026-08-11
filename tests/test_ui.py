@@ -66,6 +66,17 @@ class UiTests(unittest.TestCase):
         self.assertTrue(window._result_failed(result))
         window.close()
 
+    def test_stale_async_result_is_discarded_after_generation_changes(self):
+        window = MainWindow()
+        marker = []
+        task = object()
+        window._tasks.add(task)
+        window._generation = 2
+        window._finish_task(task, "Find candidates", lambda result: marker.append(result), {"old": True}, 1)
+        self.assertEqual(marker, [])
+        self.assertIn("discarded", window.statusBar().currentMessage())
+        window.close()
+
     def test_candidate_selection_enables_plan_views_only(self):
         class FakeService:
             adapter_name = "comfyui"

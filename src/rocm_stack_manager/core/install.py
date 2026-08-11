@@ -6,9 +6,10 @@ import subprocess
 import re
 from urllib.parse import unquote, urlparse
 
-from .backup import BackupSnapshot, ExtensionBackupSnapshot
+from .backup import BackupError, BackupSnapshot, ExtensionBackupSnapshot, attach_wheelhouse, create_backup
 from .inventory import collect_inventory
 from .planning import InstallPlan, PlanningError, build_plan_binding, host_platform, validate_plan_binding
+from .staging import StagingError, stage_candidate, validate_staged_candidate
 from .verify import _clean_environment
 
 
@@ -82,6 +83,8 @@ class InstallResult:
     applied: bool = False
     returncode: int | None = None
     backup_path: str | None = None
+    staging_path: str | None = None
+    staged_command: tuple[str, ...] = ()
     output: str = ""
 
     def as_dict(self):
@@ -91,6 +94,8 @@ class InstallResult:
                 "applied": self.applied,
                 "returncode": self.returncode,
                 "backup_path": self.backup_path,
+                "staging_path": self.staging_path,
+                "staged_command": list(self.staged_command),
                 "output": self.output,
             }
         )
@@ -182,11 +187,16 @@ def dry_run_install(target, candidate, *, allow_unverified=False, **binding):
 def apply_install(
     target,
     candidate,
-    backup,
+    backup=None,
     *,
     allow_unverified=False,
     timeout=3600,
     plan=None,
+    backup_dir=None,
+    resolver_result=None,
+    resolver_runner=None,
+    staging_runner=None,
+    staging_dir=None,
     **binding,
 ):
     """Run the planned pip command after an explicit backup and approval."""
@@ -205,8 +215,55 @@ def apply_install(
         )
     else:
         validate_plan_binding(plan, target, candidate, **binding)
-    if candidate.get("resolver_status") == "resolver_failed" and not allow_unverified:
-        raise InstallationError("resolver evidence failed; pass --allow-unverified to apply")
+    if not allow_unverified:
+        from .resolver import resolver_matches_target, run_resolver
+
+        if resolver_result is None:
+            resolver_result = run_resolver(
+                target,
+                candidate,
+                catalog_hash=binding.get("catalog_hash"),
+                adapter_id=binding.get("adapter_id"),
+                target_gfx=binding.get("target_gfx"),
+                runner=resolver_runner or subprocess.run,
+                timeout=min(timeout, 900),
+            )
+        if not resolver_matches_target(
+            resolver_result,
+            target,
+            candidate,
+            catalog_hash=binding.get("catalog_hash"),
+            adapter_id=binding.get("adapter_id"),
+            target_gfx=binding.get("target_gfx"),
+        ):
+            status = getattr(resolver_result, "status", "not_collected")
+            raise InstallationError(f"fresh target-bound resolver preflight required; status={status}")
+    try:
+        staged = stage_candidate(
+            target,
+            candidate,
+            staging_dir,
+            timeout=min(timeout, 1800),
+            runner=staging_runner or subprocess.run,
+        )
+        validate_staged_candidate(staged)
+    except StagingError as error:
+        raise InstallationError(str(error)) from error
+    if backup is None:
+        backup = create_backup(target, backup_dir)
+    if backup.path.is_file():
+        try:
+            backup = attach_wheelhouse(backup, staged)
+        except (BackupError, OSError, ValueError) as error:
+            raise InstallationError(f"cannot preserve staged artifacts in backup: {error}") from error
+    staged_command = (
+        str(target.python_executable),
+        "-m",
+        "pip",
+        "install",
+        "--no-input",
+        *staged.install_command,
+    )
     stale_packages = _stale_managed_packages(target, candidate)
     output_prefix = ""
     if stale_packages:
@@ -226,6 +283,8 @@ def apply_install(
                 plan=plan,
                 applied=True,
                 backup_path=str(backup.path),
+                staging_path=str(staged.root),
+                staged_command=staged_command,
                 output=f"stale package cleanup failed: {type(error).__name__}: {error}",
             )
         cleanup_output = (cleanup.stdout or "") + (cleanup.stderr or "")
@@ -235,12 +294,14 @@ def apply_install(
                 applied=True,
                 returncode=cleanup.returncode,
                 backup_path=str(backup.path),
+                staging_path=str(staged.root),
+                staged_command=staged_command,
                 output=f"stale package cleanup failed:\n{cleanup_output}",
             )
         output_prefix = f"Removed stale packages: {', '.join(stale_packages)}\n"
     try:
         completed = subprocess.run(
-            list(plan.command),
+            list(staged_command),
             cwd=str(target.comfyui_dir),
             env=_clean_environment(target),
             capture_output=True,
@@ -253,6 +314,8 @@ def apply_install(
             plan=plan,
             applied=True,
             backup_path=str(backup.path),
+            staging_path=str(staged.root),
+            staged_command=staged_command,
             output=output_prefix + f"{type(error).__name__}: {error}",
         )
     output = output_prefix + (completed.stdout or "") + (completed.stderr or "")
@@ -261,6 +324,8 @@ def apply_install(
         applied=True,
         returncode=completed.returncode,
         backup_path=str(backup.path),
+        staging_path=str(staged.root),
+        staged_command=staged_command,
         output=output,
     )
 
@@ -284,6 +349,7 @@ def build_restore_plan(target, backup):
             )
     if not backup.requirements_path.is_file():
         raise InstallationError(f"backup requirements file is missing: {backup.requirements_path}")
+    requirements_source = backup.wheelhouse_requirements_path or backup.requirements_path
     command = (
         str(target.python_executable),
         "-m",
@@ -292,15 +358,30 @@ def build_restore_plan(target, backup):
         "--no-input",
         "--force-reinstall",
         "--requirement",
-        str(backup.requirements_path),
+        str(requirements_source),
     )
+    if backup.wheelhouse_path:
+        command = (
+            str(target.python_executable),
+            "-m",
+            "pip",
+            "install",
+            "--no-input",
+            "--force-reinstall",
+            "--no-index",
+            "--find-links",
+            str(backup.wheelhouse_path),
+            "--require-hashes",
+            "--requirement",
+            str(requirements_source),
+        )
     return InstallPlan(
         target_root=target.root,
         candidate={"id": f"backup:{backup.path.name}"},
         command=command,
         warnings=(
             "restore reinstalls recorded versions but does not prune extra packages",
-            "restore is version-pinned; package artifact bytes are not archived",
+            "restore uses hash-verified local artifacts" if backup.wheelhouse_path else "restore is version-pinned; package artifact bytes are not archived",
         ),
     )
 

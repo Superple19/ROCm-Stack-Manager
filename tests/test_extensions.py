@@ -413,6 +413,14 @@ class ExtensionReportTests(unittest.TestCase):
             ({"id": "bitsandbytes", "status": "installable"},),
             ({"extension_id": "bitsandbytes", "command": ["python", "-m", "pip", "install", "pkg"]},),
             selections=("bitsandbytes",),
+            selection_hash="selection",
+            resolver_results=(
+                {
+                    "extension_id": "bitsandbytes",
+                    "status": "resolver_verified",
+                    "selection_hash": "selection",
+                },
+            ),
         )
         backup = type("Backup", (), {"path": Path("C:/backup.json")})()
         target = type(

@@ -18,6 +18,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.service = service or ManagerService()
         self.thread_pool = QtCore.QThreadPool.globalInstance()
         self._tasks = set()
+        self._generation = 0
         self._candidates = []
         self._candidate = None
         self._core_plan = None
@@ -192,6 +193,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.target_edit.setText(path)
 
     def _adapter_changed(self, adapter_name):
+        self._bump_generation()
         self.service.set_adapter(adapter_name)
         self.target_summary.setText("No target detected")
         self._candidates = []
@@ -215,16 +217,26 @@ class MainWindow(QtWidgets.QMainWindow):
         if path:
             self.catalog_edit.setText(path)
 
+    def _bump_generation(self):
+        self._generation += 1
+        return self._generation
+
     def _run(self, label, function, callback):
+        generation = self._generation
         self.statusBar().showMessage(f"{label}…")
         task = Task(function)
         self._tasks.add(task)
-        task.signals.finished.connect(lambda result: self._finish_task(task, label, callback, result))
-        task.signals.failed.connect(lambda error: self._fail_task(task, label, error))
+        task.signals.finished.connect(
+            lambda result: self._finish_task(task, label, callback, result, generation)
+        )
+        task.signals.failed.connect(lambda error: self._fail_task(task, label, error, generation))
         self.thread_pool.start(task)
 
-    def _finish_task(self, task, label, callback, result):
+    def _finish_task(self, task, label, callback, result, generation=None):
         self._tasks.discard(task)
+        if generation is not None and generation != self._generation:
+            self.statusBar().showMessage(f"{label} result discarded (target changed)")
+            return
         self.statusBar().showMessage(f"{label} {'failed' if self._result_failed(result) else 'complete'}")
         callback(result)
 
@@ -250,12 +262,16 @@ class MainWindow(QtWidgets.QMainWindow):
                 return True
         return False
 
-    def _fail_task(self, task, label, error):
+    def _fail_task(self, task, label, error, generation=None):
         self._tasks.discard(task)
+        if generation is not None and generation != self._generation:
+            self.statusBar().showMessage(f"{label} error discarded (target changed)")
+            return
         self.statusBar().showMessage(f"{label} failed")
         self._show_error(error)
 
     def _detect(self):
+        self._bump_generation()
         path = self.target_edit.text().strip() or "."
         self._run("Detect", lambda: self.service.detect(path), self._display_target_and_probe)
 
@@ -270,6 +286,7 @@ class MainWindow(QtWidgets.QMainWindow):
             )
 
     def _display_target(self, target):
+        self._bump_generation()
         self._candidates = []
         self._candidate = None
         self._clear_plan_state()
@@ -343,6 +360,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
     def _load_catalog(self, refresh):
+        self._bump_generation()
         path = None if refresh else (self.catalog_edit.text().strip() or None)
         self._run(
             "Load Matrix catalog",
@@ -354,9 +372,14 @@ class MainWindow(QtWidgets.QMainWindow):
         _, state = result
         fetched = state.fetched_at or "unknown"
         artifacts = state.artifact_count if state.artifact_count is not None else "unknown"
+        age = "unknown"
+        if state.cache_age_seconds is not None:
+            age = f"{state.cache_age_seconds / 86400:.1f} days"
+        failures = state.source_failure_count
         self.catalog_summary.setText(
             f"Loaded: {state.path} | Source: {state.source} | "
-            f"Fetched: {fetched} | Artifacts: {artifacts} | "
+            f"Fetched: {fetched} ({age} old) | Artifacts: {artifacts} | "
+            f"Source failures: {failures} | "
             f"Refresh requested: {'yes' if state.refreshed else 'no'}"
         )
         self._append_json(
@@ -366,6 +389,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 "fetched_at": state.fetched_at,
                 "catalog_sha256": state.catalog_sha256,
                 "artifact_count": state.artifact_count,
+                "cache_age_seconds": state.cache_age_seconds,
+                "source_failure_count": state.source_failure_count,
             }
         )
         if self.service.target is not None and getattr(self.service, "extension_capable", lambda: False)():
@@ -376,6 +401,7 @@ class MainWindow(QtWidgets.QMainWindow):
             )
 
     def _find_candidates(self):
+        self._bump_generation()
         if self.service.catalog is None:
             self._show_error("CatalogError: load a Matrix catalog first")
             return
@@ -425,6 +451,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage(f"{len(self._candidates)} candidates")
 
     def _candidate_selected(self, selected, _deselected):
+        self._bump_generation()
         indexes = selected.indexes()
         self._candidate = self.candidate_model.candidate_at(indexes[0].row()) if indexes else None
         self._clear_plan_state()
@@ -443,9 +470,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.apply_extension_button.setEnabled(False)
 
     def _verify(self):
+        self._bump_generation()
         self._run("Inspect runtime and hardware", self.service.inspect, self._display_inspection)
 
     def _inventory(self):
+        self._bump_generation()
         self._run(
             "Inventory packages",
             lambda: self.service.inventory(self._candidate),
@@ -453,6 +482,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
     def _plan(self):
+        self._bump_generation()
         self._run(
             "Build install dry-run",
             lambda: self.service.plan(self._candidate),
@@ -460,6 +490,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
     def _extension_plan(self):
+        self._bump_generation()
         selections = self._selected_extensions()
         if not selections:
             self._show_error("select at least one extension before building an extension plan")

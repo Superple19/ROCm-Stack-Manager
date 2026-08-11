@@ -1,7 +1,9 @@
 import tempfile
 import unittest
+import json
 from pathlib import Path
 from unittest.mock import patch
+from types import SimpleNamespace
 
 from rocm_stack_manager.core.detection import detect_target
 from rocm_stack_manager.core.backup import BackupSnapshot
@@ -17,6 +19,42 @@ class InstallPlanTests(unittest.TestCase):
         python.parent.mkdir()
         python.write_text("", encoding="utf-8")
         return detect_target(root)
+
+    def _staged(self, root):
+        artifacts = root / "staging" / "wheelhouse"
+        artifacts.mkdir(parents=True)
+        wheel = artifacts / "torch-2.12.0-cp312-cp312-win_amd64.whl"
+        wheel.write_bytes(b"test-wheel")
+        requirements = artifacts.parent / "requirements-hashed.txt"
+        import hashlib
+        requirements.write_text(
+            f"torch==2.12.0 --hash=sha256:{hashlib.sha256(wheel.read_bytes()).hexdigest()}\n",
+            encoding="utf-8",
+        )
+        manifest = artifacts.parent / "manifest.json"
+        manifest.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "requirements_sha256": hashlib.sha256(requirements.read_bytes()).hexdigest(),
+                    "files": [{"filename": wheel.name, "sha256": hashlib.sha256(wheel.read_bytes()).hexdigest()}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return SimpleNamespace(
+            root=artifacts.parent,
+            artifacts_path=artifacts,
+            requirements_path=requirements,
+            manifest_path=manifest,
+            files=(
+                {
+                    "filename": wheel.name,
+                    "sha256": hashlib.sha256(wheel.read_bytes()).hexdigest(),
+                },
+            ),
+            install_command=("--no-index", "--find-links", str(artifacts), "--require-hashes", "--requirement", str(requirements)),
+        )
 
     def test_historical_wheels_create_warning_only_dry_run(self):
         candidate = {
@@ -164,6 +202,29 @@ class InstallPlanTests(unittest.TestCase):
             with self.assertRaises(InstallationError):
                 apply_install(target, candidate, backup)
 
+    def test_resolver_failure_blocks_cleanup_and_install(self):
+        candidate = {
+            "id": "candidate",
+            "artifact_available": True,
+            "python_compatibility": "compatible",
+            "wheel_urls": ["https://example.test/torch.whl"],
+        }
+        failed = type("Resolver", (), {"status": "resolver_failed", "binding": {}})()
+        with tempfile.TemporaryDirectory() as directory:
+            target = self._target(Path(directory))
+            backup = BackupSnapshot(Path(directory) / "backup.json", Path(directory) / "requirements.txt", "", ())
+            with patch("rocm_stack_manager.core.install.collect_inventory") as inventory:
+                with patch("rocm_stack_manager.core.install.subprocess.run") as run:
+                    with self.assertRaisesRegex(InstallationError, "fresh target-bound resolver"):
+                        apply_install(
+                            target,
+                            candidate,
+                            backup,
+                            resolver_result=failed,
+                        )
+            inventory.assert_not_called()
+            run.assert_not_called()
+
     def test_artifact_only_candidate_is_rejected(self):
         candidate = {
             "id": "therock:nightly:10.1.0:artifact-only",
@@ -202,11 +263,14 @@ class InstallPlanTests(unittest.TestCase):
             target = self._target(Path(directory))
             backup = BackupSnapshot(Path(directory) / "backup.json", Path(directory) / "requirements.txt", "", ())
             with patch("rocm_stack_manager.core.install.collect_inventory", return_value=inventory):
-                with patch("rocm_stack_manager.core.install.subprocess.run", return_value=completed) as run:
-                    result = apply_install(target, candidate, backup)
+                with patch("rocm_stack_manager.core.install.stage_candidate", return_value=self._staged(Path(directory))):
+                    with patch("rocm_stack_manager.core.install.subprocess.run", return_value=completed) as run:
+                        result = apply_install(target, candidate, backup)
 
         self.assertEqual(result.returncode, 0)
-        self.assertEqual(run.call_args_list[0].args[0][3], "uninstall")
-        self.assertIn("amd-torch-device-gfx1201", run.call_args_list[0].args[0])
-        self.assertEqual(run.call_args_list[1].args[0][3], "install")
+        self.assertEqual(run.call_args_list[0].args[0][3], "install")
+        self.assertIn("--dry-run", run.call_args_list[0].args[0])
+        self.assertEqual(run.call_args_list[1].args[0][3], "uninstall")
+        self.assertIn("amd-torch-device-gfx1201", run.call_args_list[1].args[0])
+        self.assertEqual(run.call_args_list[2].args[0][3], "install")
         self.assertIn("Removed stale packages", result.output)

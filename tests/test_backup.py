@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from types import SimpleNamespace
 
 from rocm_stack_manager.core.backup import (
     BackupError,
@@ -11,6 +12,7 @@ from rocm_stack_manager.core.backup import (
     ExtensionBackupSnapshot,
     create_backup,
     create_extension_backup,
+    attach_wheelhouse,
     load_backup,
     load_extension_backup,
     migrate_backup,
@@ -37,6 +39,38 @@ class BackupAndApplyTests(unittest.TestCase):
         python.write_text("", encoding="utf-8")
         return detect_target(root)
 
+    def _staged(self, root):
+        import hashlib
+
+        artifacts = root / "staging" / "wheelhouse"
+        artifacts.mkdir(parents=True)
+        wheel = artifacts / "torch-2.12.0-cp312-cp312-win_amd64.whl"
+        wheel.write_bytes(b"test-wheel")
+        requirements = artifacts.parent / "requirements-hashed.txt"
+        requirements.write_text(
+            f"torch==2.12.0 --hash=sha256:{hashlib.sha256(wheel.read_bytes()).hexdigest()}\n",
+            encoding="utf-8",
+        )
+        manifest = artifacts.parent / "manifest.json"
+        manifest.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "requirements_sha256": hashlib.sha256(requirements.read_bytes()).hexdigest(),
+                    "files": [{"filename": wheel.name, "sha256": hashlib.sha256(wheel.read_bytes()).hexdigest()}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return SimpleNamespace(
+            root=artifacts.parent,
+            artifacts_path=artifacts,
+            requirements_path=requirements,
+            manifest_path=manifest,
+            files=(("filename",),),
+            install_command=("--no-index", "--find-links", str(artifacts), "--require-hashes", "--requirement", str(requirements)),
+        )
+
     def test_backup_writes_freeze_atomically(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -49,6 +83,39 @@ class BackupAndApplyTests(unittest.TestCase):
             self.assertEqual(document["requirements"], ["torch==2.12.0"])
             self.assertTrue(backup.requirements_path.is_file())
             self.assertFalse(backup.path.with_suffix(".json.tmp").exists())
+
+    def test_backup_preserves_and_validates_wheelhouse(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = self._target(root)
+            completed = type("Completed", (), {"returncode": 0, "stdout": "torch==2.12.0\n", "stderr": ""})()
+            with patch("rocm_stack_manager.core.backup.subprocess.run", return_value=completed):
+                backup = create_backup(target, root / "backups")
+            wheelhouse = root / "staging" / "wheelhouse"
+            wheelhouse.mkdir(parents=True)
+            wheel = wheelhouse / "torch-2.12.0-cp312-cp312-win_amd64.whl"
+            wheel.write_bytes(b"wheel")
+            requirements = wheelhouse.parent / "requirements-hashed.txt"
+            requirements.write_text(
+                f"torch==2.12.0 --hash=sha256:{hashlib.sha256(wheel.read_bytes()).hexdigest()}\n",
+                encoding="utf-8",
+            )
+            staged = type(
+                "Staged",
+                (),
+                {
+                    "artifacts_path": wheelhouse,
+                    "requirements_path": requirements,
+                    "files": ({"filename": wheel.name},),
+                },
+            )()
+            attached = attach_wheelhouse(backup, staged)
+            loaded = load_backup(attached.path)
+            self.assertTrue(loaded.wheelhouse_path.is_dir())
+            wheel.write_bytes(b"changed")
+            attached.wheelhouse_path.joinpath(wheel.name).write_bytes(b"changed")
+            with self.assertRaisesRegex(BackupError, "hash mismatch"):
+                load_backup(attached.path)
 
     def test_apply_requires_explicit_unverified_approval(self):
         candidate = {
@@ -85,8 +152,10 @@ class BackupAndApplyTests(unittest.TestCase):
                 "2026-01-01T00:00:00Z",
                 ("torch==2.12.0",),
             )
-            with patch("rocm_stack_manager.core.install.subprocess.run", return_value=completed) as run:
-                result = apply_install(target, candidate, backup)
+            staged = self._staged(Path(directory))
+            with patch("rocm_stack_manager.core.install.stage_candidate", return_value=staged):
+                with patch("rocm_stack_manager.core.install.subprocess.run", return_value=completed) as run:
+                    result = apply_install(target, candidate, backup)
 
         self.assertTrue(result.applied)
         self.assertEqual(result.returncode, 0)

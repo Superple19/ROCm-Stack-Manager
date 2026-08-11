@@ -481,6 +481,7 @@ class ExtensionPlan:
     allow_unverified: bool = False
     selections: tuple[str, ...] = ()
     selection_hash: str | None = None
+    resolver_results: tuple = ()
 
     def as_dict(self):
         return {
@@ -492,6 +493,10 @@ class ExtensionPlan:
             "allow_unverified": self.allow_unverified,
             "selections": list(self.selections),
             "selection_hash": self.selection_hash,
+            "resolver_results": [
+                result.as_dict() if hasattr(result, "as_dict") else dict(result)
+                for result in self.resolver_results
+            ],
             "network_access": False,
             "installation_performed": False,
         }
@@ -672,6 +677,7 @@ def build_extension_plan(
         selection_hash=hashlib.sha256(
             json.dumps(
                 {
+                    "candidate_id": candidate.get("id"),
                     "candidate_hash": candidate.get("candidate_hash"),
                     "selections": list(selected_ids),
                 },
@@ -699,6 +705,23 @@ def apply_extension_plan(target, plan, backup, timeout=3600):
 
     if not plan.selections:
         raise ValueError("extension apply requires explicit extension selections")
+    selected = set(plan.selections)
+    resolver_results = tuple(plan.resolver_results or ())
+    result_by_id = {
+        (result.extension_id if hasattr(result, "extension_id") else result.get("extension_id")): result
+        for result in resolver_results
+    }
+    missing = selected - set(result_by_id)
+    if missing:
+        raise ValueError(
+            "target-bound extension resolver preflight required: " + ", ".join(sorted(missing))
+        )
+    for extension_id in selected:
+        result = result_by_id[extension_id]
+        status = result.status if hasattr(result, "status") else result.get("status")
+        selection_hash = result.selection_hash if hasattr(result, "selection_hash") else result.get("selection_hash")
+        if status != "resolver_verified" or selection_hash != plan.selection_hash:
+            raise ValueError(f"extension resolver preflight is not verified for {extension_id}")
 
     blocked = [
         item

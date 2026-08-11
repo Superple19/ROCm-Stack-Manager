@@ -4,6 +4,7 @@ import json
 import hashlib
 import os
 import re
+import shutil
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -29,6 +30,8 @@ class BackupSnapshot:
     target_root: str | None = None
     python_executable: str | None = None
     requirements_sha256: str | None = None
+    wheelhouse_path: Path | None = None
+    wheelhouse_requirements_path: Path | None = None
 
     def as_dict(self):
         return {
@@ -40,6 +43,10 @@ class BackupSnapshot:
             "target_root": self.target_root,
             "python_executable": self.python_executable,
             "requirements_sha256": self.requirements_sha256,
+            "wheelhouse_path": str(self.wheelhouse_path) if self.wheelhouse_path else None,
+            "wheelhouse_requirements_path": (
+                str(self.wheelhouse_requirements_path) if self.wheelhouse_requirements_path else None
+            ),
         }
 
 
@@ -101,6 +108,95 @@ def _resolve_requirements_path(backup_path, value):
     except ValueError as error:
         raise BackupError("backup requirements path must stay beside the backup JSON") from error
     return candidate
+
+
+def _resolve_backup_path(backup_path, value):
+    if not value:
+        return None
+    root = backup_path.parent.resolve()
+    candidate = (root / str(value)).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError as error:
+        raise BackupError("backup wheelhouse path must stay beside the backup JSON") from error
+    return candidate
+
+
+def attach_wheelhouse(backup, staged):
+    """Copy staged artifacts into a backup and record their hashes."""
+
+    wheelhouse = backup.path.parent / f"{backup.path.stem}-wheelhouse"
+    if wheelhouse.exists():
+        shutil.rmtree(wheelhouse)
+    wheelhouse.mkdir(parents=True, exist_ok=True)
+    for item in staged.files:
+        source = staged.artifacts_path / item["filename"]
+        if not source.is_file():
+            raise BackupError(f"staged artifact is missing: {source}")
+        shutil.copy2(source, wheelhouse / source.name)
+    requirements_path = backup.path.parent / f"{backup.path.stem}-wheelhouse-requirements.txt"
+    requirements_path.write_text(staged.requirements_path.read_text(encoding="utf-8"), encoding="utf-8")
+    document = json.loads(backup.path.read_text(encoding="utf-8"))
+    document["wheelhouse_path"] = wheelhouse.name
+    document["wheelhouse_requirements_path"] = requirements_path.name
+    document["wheelhouse_requirements_sha256"] = hashlib.sha256(requirements_path.read_bytes()).hexdigest()
+    document["wheelhouse_manifest"] = {
+        "schema_version": 1,
+        "files": [
+            {
+                "filename": item["filename"],
+                "sha256": hashlib.sha256((wheelhouse / item["filename"]).read_bytes()).hexdigest(),
+            }
+            for item in staged.files
+        ],
+    }
+    _atomic_write(backup.path, document)
+    return BackupSnapshot(
+        path=backup.path,
+        requirements_path=backup.requirements_path,
+        created_at=backup.created_at,
+        requirements=backup.requirements,
+        target_root=backup.target_root,
+        python_executable=backup.python_executable,
+        requirements_sha256=backup.requirements_sha256,
+        wheelhouse_path=wheelhouse,
+        wheelhouse_requirements_path=requirements_path,
+    )
+
+
+def _validate_wheelhouse(backup_path, document):
+    wheelhouse = _resolve_backup_path(backup_path, document.get("wheelhouse_path"))
+    hashed_requirements = _resolve_backup_path(backup_path, document.get("wheelhouse_requirements_path"))
+    manifest = document.get("wheelhouse_manifest")
+    if wheelhouse is None and hashed_requirements is None and manifest is None:
+        return None, None
+    expected_requirements_hash = document.get("wheelhouse_requirements_sha256")
+    if (
+        wheelhouse is None
+        or hashed_requirements is None
+        or not isinstance(manifest, dict)
+        or not isinstance(expected_requirements_hash, str)
+        or not _SHA256_RE.fullmatch(expected_requirements_hash)
+    ):
+        raise BackupError(f"backup wheelhouse metadata is incomplete: {backup_path}")
+    files = manifest.get("files")
+    if not isinstance(files, list) or not files:
+        raise BackupError(f"backup wheelhouse manifest has no artifacts: {backup_path}")
+    if not wheelhouse.is_dir() or not hashed_requirements.is_file():
+        raise BackupError(f"backup wheelhouse is missing: {wheelhouse}")
+    if hashlib.sha256(hashed_requirements.read_bytes()).hexdigest() != expected_requirements_hash.casefold():
+        raise BackupError(f"backup wheelhouse requirements hash mismatch: {hashed_requirements}")
+    for item in files:
+        if not isinstance(item, dict) or not isinstance(item.get("filename"), str) or not _SHA256_RE.fullmatch(str(item.get("sha256", ""))):
+            raise BackupError(f"backup wheelhouse manifest is invalid: {backup_path}")
+        artifact = (wheelhouse / item["filename"]).resolve()
+        try:
+            artifact.relative_to(wheelhouse.resolve())
+        except ValueError as error:
+            raise BackupError(f"backup wheelhouse artifact escapes its directory: {item['filename']}") from error
+        if not artifact.is_file() or hashlib.sha256(artifact.read_bytes()).hexdigest() != item["sha256"]:
+            raise BackupError(f"backup wheelhouse artifact hash mismatch: {item['filename']}")
+    return wheelhouse, hashed_requirements
 
 
 def create_backup(target, destination=None, timeout=60):
@@ -296,6 +392,7 @@ def load_backup(path, *, materialize=True):
     requirements, requirements_path, expected_hash = _validated_requirements(
         backup_path, document, extensions=False
     )
+    wheelhouse_path, wheelhouse_requirements_path = _validate_wheelhouse(backup_path, document)
     return BackupSnapshot(
         path=backup_path,
         requirements_path=requirements_path,
@@ -304,6 +401,8 @@ def load_backup(path, *, materialize=True):
         target_root=document.get("target_root"),
         python_executable=document.get("python_executable"),
         requirements_sha256=expected_hash,
+        wheelhouse_path=wheelhouse_path,
+        wheelhouse_requirements_path=wheelhouse_requirements_path,
     )
 
 

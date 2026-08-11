@@ -174,23 +174,25 @@ targeted `extensions resolve` preflight; this does not promote the profile to
 verified. `extensions restore` is dry-run by default and never prunes unrelated
 packages.
 The `install` command emits a target-local pip command by default. It never
-executes pip unless `--apply` is explicitly provided, and candidates with failed
-resolver evidence produce an explicit warning requiring `--allow-unverified`.
-Passing `--apply` explicitly creates a target-local package backup before
-running pip. Applying a failed-resolver candidate additionally requires
-`--allow-unverified`.
+executes pip unless `--apply` is explicitly provided. An apply first runs a
+fresh target-bound resolver preflight, stages exact artifacts into a local
+wheelhouse, and only then creates the package backup and changes the target.
+Failed or missing resolver evidence therefore blocks apply unless
+`--allow-unverified` is explicitly provided.
 During an apply, stale managed ROCm and PyTorch packages are removed before
 the selected candidate is installed; unrelated application extensions remain.
 Plans warn when the selected package set does not include `torchaudio`; this is
 safe for image-only ComfyUI use but may affect audio workflows.
 The `restore` command (also available as `rollback`) accepts a current backup
-JSON path and is dry-run by default. It reinstalls recorded versions with
-`--force-reinstall`; it does not remove extra packages. The backup schema,
-embedded requirements, sidecar file, and SHA-256 are validated before a plan
-is produced. A dry-run never creates or repairs backup files. Backups created
+JSON path and is dry-run by default. Backups created by an apply include a
+target-local wheelhouse and SHA-256 manifest; restore uses `--no-index`,
+`--find-links`, and `--require-hashes` against those local artifacts. Older
+backups without a wheelhouse remain version-pinned and are labelled as such.
+Restore does not remove extra packages. The backup schema, requirements
+sidecar, wheelhouse manifest, and hashes are validated before a plan is
+produced. A dry-run never creates or repairs backup files. Backups created
 before the current schema must first be converted with `migrate-backup`, which
-never overwrites the source. Wheel bytes are not archived, so restore remains
-version-pinned rather than byte-exact.
+never overwrites the source.
 The `verify` command executes only the selected target's Python interpreter. It
 does not call a globally installed ROCm executable; host GPU state is reported
 separately from target-local Torch, HIP, and ROCm package metadata.

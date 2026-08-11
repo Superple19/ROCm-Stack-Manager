@@ -1,6 +1,6 @@
 """Targeted, non-mutating dependency checks for one core candidate."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import subprocess
 
@@ -19,6 +19,7 @@ class ResolverResult:
     returncode: int | None = None
     output: str = ""
     observed_at: str = ""
+    binding: dict = field(default_factory=dict)
 
     def as_dict(self):
         return {
@@ -33,6 +34,7 @@ class ResolverResult:
             "promotion": "none",
             "network_access": True,
             "installation_performed": False,
+            "binding": dict(self.binding or {}),
         }
 
 
@@ -54,10 +56,28 @@ def build_resolver_command(target, candidate):
     return tuple(command)
 
 
-def run_resolver(target, candidate, *, timeout=900, runner=subprocess.run):
+def run_resolver(
+    target,
+    candidate,
+    *,
+    catalog_hash=None,
+    adapter_id=None,
+    target_gfx=None,
+    timeout=900,
+    runner=subprocess.run,
+):
     """Resolve one selected candidate without installing it."""
 
     observed_at = _utc_now()
+    from .planning import build_plan_binding
+
+    binding = build_plan_binding(
+        target,
+        candidate,
+        catalog_hash=catalog_hash,
+        adapter_id=adapter_id,
+        target_gfx=target_gfx,
+    )
     try:
         command = build_resolver_command(target, candidate)
     except (OSError, ValueError) as error:
@@ -68,6 +88,7 @@ def run_resolver(target, candidate, *, timeout=900, runner=subprocess.run):
             command=(),
             output=str(error),
             observed_at=observed_at,
+            binding=binding,
         )
     try:
         completed = runner(
@@ -87,6 +108,7 @@ def run_resolver(target, candidate, *, timeout=900, runner=subprocess.run):
             command=command,
             output=f"{type(error).__name__}: {error}",
             observed_at=observed_at,
+            binding=binding,
         )
     output = ((completed.stdout or "") + (completed.stderr or ""))[-12000:]
     return ResolverResult(
@@ -97,4 +119,22 @@ def run_resolver(target, candidate, *, timeout=900, runner=subprocess.run):
         returncode=completed.returncode,
         output=output,
         observed_at=observed_at,
+        binding=binding,
     )
+
+
+def resolver_matches_target(result, target, candidate, *, catalog_hash=None, adapter_id=None, target_gfx=None):
+    """Return whether resolver evidence belongs to this exact target and candidate."""
+
+    if result is None or result.status != "resolver_verified":
+        return False
+    from .planning import build_plan_binding
+
+    expected = build_plan_binding(
+        target,
+        candidate,
+        catalog_hash=catalog_hash,
+        adapter_id=adapter_id,
+        target_gfx=target_gfx,
+    )
+    return result.binding == expected

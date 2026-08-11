@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 from .adapters.registry import available_adapters, get_adapter
@@ -19,7 +20,7 @@ from .core.adapter import (
     TargetProbeAdapter,
 )
 from .core.catalog import CatalogError, ensure_catalog, iter_candidates, load_catalog
-from .core.backup import BackupError, create_backup, load_backup, migrate_backup
+from .core.backup import BackupError, load_backup, migrate_backup
 from .core.detection import TargetDetectionError
 from .core.hardware import detected_gfx_targets, normalize_gfx
 from .core.install import (
@@ -497,6 +498,13 @@ def main(argv=None):
                     extension_catalog,
                     args.allow_unverified,
                 )
+                resolver_results = run_extension_resolver(
+                    target,
+                    candidate,
+                    plan.extensions,
+                    selection_hash=plan.selection_hash,
+                )
+                plan = replace(plan, resolver_results=resolver_results)
                 backup = adapter.create_extension_backup(target, plan, args.backup_dir)
                 result = adapter.apply_extension_plan(target, plan, backup)
                 if args.json_output:
@@ -627,14 +635,11 @@ def main(argv=None):
             return 0
         if args.command == "install":
             if args.apply:
-                if candidate.get("resolver_status") == "resolver_failed" and not args.allow_unverified:
-                    raise InstallationError("resolver evidence failed; pass --allow-unverified to apply")
-                backup = create_backup(target, args.backup_dir)
                 result = apply_install(
                     target,
                     candidate,
-                    backup,
                     allow_unverified=args.allow_unverified,
+                    backup_dir=args.backup_dir,
                 )
             else:
                 result = dry_run_install(target, candidate, allow_unverified=args.allow_unverified)

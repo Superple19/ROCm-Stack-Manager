@@ -1,6 +1,8 @@
 """Targeted, non-mutating dependency checks for selected extensions."""
 
 from dataclasses import dataclass
+import hashlib
+import json
 import subprocess
 
 from .verify import _clean_environment
@@ -18,6 +20,7 @@ class ExtensionResolverResult:
     output: str = ""
     claim_status: str | None = None
     preflight: bool = False
+    selection_hash: str | None = None
 
     def as_dict(self):
         return {
@@ -34,6 +37,7 @@ class ExtensionResolverResult:
             "promotion": "none",
             "network_access": True,
             "installation_performed": False,
+            "selection_hash": self.selection_hash,
         }
 
 
@@ -71,10 +75,37 @@ def build_extension_resolver_command(target, candidate, extension):
     return tuple(command)
 
 
-def run_extension_resolver(target, candidate, extensions, *, timeout=900, runner=subprocess.run):
+def _selection_hash(candidate, extensions):
+    selected = sorted(
+        (extension.get("id"), extension.get("extension_candidate_id"))
+        for extension in extensions
+    )
+    return hashlib.sha256(
+        json.dumps(
+            {
+                "candidate_id": candidate.get("id"),
+                "candidate_hash": candidate.get("candidate_hash"),
+                "selections": selected,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def run_extension_resolver(
+    target,
+    candidate,
+    extensions,
+    *,
+    selection_hash=None,
+    timeout=900,
+    runner=subprocess.run,
+):
     """Resolve only the selected extension records; never install anything."""
 
     results = []
+    selection_hash = selection_hash or _selection_hash(candidate, extensions)
     for extension in extensions:
         try:
             command = build_extension_resolver_command(target, candidate, extension)
@@ -90,6 +121,7 @@ def run_extension_resolver(target, candidate, extensions, *, timeout=900, runner
                     output=str(error),
                     claim_status=extension.get("claim_status"),
                     preflight=bool(extension.get("preflight_eligible")),
+                    selection_hash=selection_hash,
                 )
             )
             continue
@@ -117,6 +149,7 @@ def run_extension_resolver(target, candidate, extensions, *, timeout=900, runner
                     output=output,
                     claim_status=extension.get("claim_status"),
                     preflight=bool(extension.get("preflight_eligible")),
+                    selection_hash=selection_hash,
                 )
             )
         except (OSError, subprocess.TimeoutExpired) as error:
@@ -131,6 +164,7 @@ def run_extension_resolver(target, candidate, extensions, *, timeout=900, runner
                     output=f"{type(error).__name__}: {error}",
                     claim_status=extension.get("claim_status"),
                     preflight=bool(extension.get("preflight_eligible")),
+                    selection_hash=selection_hash,
                 )
             )
     return tuple(results)

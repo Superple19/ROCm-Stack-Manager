@@ -1,8 +1,10 @@
 """Presentation-facing services for the optional Manager UI."""
 
 from dataclasses import dataclass
+from dataclasses import replace
 import json
 from pathlib import Path
+from datetime import datetime, timezone
 
 from ..adapters.registry import get_adapter
 from ..core.adapter import (
@@ -13,7 +15,7 @@ from ..core.adapter import (
     HardwareProvider,
     PythonPackageAdapter,
 )
-from ..core.backup import create_backup, load_backup, load_extension_backup
+from ..core.backup import load_backup, load_extension_backup
 from ..core.catalog import ensure_catalog, iter_candidates, load_catalog
 from ..core.detection import TargetLayout
 from ..core.hardware import detected_gfx_targets, hardware_from_devices, probe_hardware
@@ -41,6 +43,8 @@ class CatalogState:
     fetched_at: str | None = None
     catalog_sha256: str | None = None
     artifact_count: int | None = None
+    cache_age_seconds: float | None = None
+    source_failure_count: int = 0
 
 
 class ManagerService:
@@ -76,13 +80,25 @@ class ManagerService:
             except (OSError, json.JSONDecodeError):
                 continue
             break
+        fetched_at = manifest.get("fetched_at")
+        age = None
+        if isinstance(fetched_at, str):
+            try:
+                observed = datetime.fromisoformat(fetched_at.replace("Z", "+00:00"))
+                age = max(0.0, (datetime.now(timezone.utc) - observed).total_seconds())
+            except ValueError:
+                age = None
+        failures = manifest.get("failures") or manifest.get("errors") or ()
+        failure_count = len(failures) if isinstance(failures, list) else 0
         self.catalog_state = CatalogState(
             path=catalog_path,
             source=source,
             refreshed=refresh,
-            fetched_at=manifest.get("fetched_at"),
+            fetched_at=fetched_at,
             catalog_sha256=manifest.get("catalog_sha256"),
             artifact_count=manifest.get("artifact_count"),
+            cache_age_seconds=age,
+            source_failure_count=failure_count,
         )
         return self.catalog, self.catalog_state
 
@@ -181,13 +197,13 @@ class ManagerService:
             adapter_id=self.adapter.id,
             target_gfx=candidate.get("gfx"),
         )
-        backup = create_backup(self.target, backup_dir)
         return apply_install(
             self.target,
             candidate,
-            backup,
+            backup=None,
             allow_unverified=allow_unverified,
             plan=plan,
+            backup_dir=backup_dir,
             catalog_hash=self.catalog_state.catalog_sha256 if self.catalog_state else None,
             adapter_id=self.adapter.id,
             target_gfx=candidate.get("gfx"),
@@ -228,7 +244,12 @@ class ManagerService:
     def extension_resolve(self, candidate, selections=()):
         self._require_target()
         plan = self.extension_plan(candidate, selections)
-        return run_extension_resolver(self.target, candidate, plan.extensions)
+        return run_extension_resolver(
+            self.target,
+            candidate,
+            plan.extensions,
+            selection_hash=plan.selection_hash,
+        )
 
     def extension_verify(self, candidate, selections=()):
         self._require_target()
@@ -248,6 +269,8 @@ class ManagerService:
         self._require_target()
         if not isinstance(self.adapter, ExtensionInstaller):
             raise ValueError(f"adapter {self.adapter.id} has no extension installation capability")
+        resolver_results = self.extension_resolve(plan.candidate, plan.selections)
+        plan = replace(plan, resolver_results=resolver_results)
         backup = self.adapter.create_extension_backup(self.target, plan, backup_dir)
         return self.adapter.apply_extension_plan(self.target, plan, backup)
 

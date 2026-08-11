@@ -68,10 +68,11 @@ Examples:
 .\.venv\Scripts\python.exe -m rocm_stack_manager resolve --target C:\path\to\target --candidate <candidate-id>
 ```
 
-The last command is a dry-run. `--apply` is required to execute pip. The
-manager creates a target-local package backup before an apply and does not
-automatically delete or restore packages after a failed install. Restore is
-explicit and does not prune unrelated packages.
+The last command is a dry-run. `--apply` is required to execute pip. An apply
+first runs a fresh target-bound resolver preflight, stages exact artifacts in a
+target-local wheelhouse, and then creates the package backup. The manager does
+not automatically delete or restore packages after a failed install. Restore
+is explicit and does not prune unrelated packages.
 
 The target probe is scoped to the selected interpreter. A result such as
 `runtime_status=detected`, `hardware_status=detected`, and
@@ -95,8 +96,9 @@ older backup explicitly, without overwriting it:
 ```
 
 The migration command only writes the new JSON and sidecar; it never installs,
-restores, or uploads anything. Restore is still version-pinned because wheel
-bytes are not archived.
+restores, or uploads anything. New applies archive a hash-verified wheelhouse,
+so restore is offline and byte-exact for those artifacts. Older backups remain
+version-pinned because they have no wheelhouse.
 
 ## Extension flow
 
