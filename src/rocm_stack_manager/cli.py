@@ -626,8 +626,15 @@ def main(argv=None):
             return 0
 
         candidate = _candidate_for_plan(catalog, args, python_tag)
+        catalog_hash = hashlib.sha256(catalog_path.read_bytes()).hexdigest()
         if args.command == "resolve":
-            result = run_resolver(target, candidate)
+            result = run_resolver(
+                target,
+                candidate,
+                catalog_hash=catalog_hash,
+                adapter_id=adapter.id,
+                target_gfx=args.gfx,
+            )
             if args.output:
                 args.output.parent.mkdir(parents=True, exist_ok=True)
                 temporary = args.output.with_suffix(args.output.suffix + ".tmp")
@@ -676,7 +683,6 @@ def main(argv=None):
                 if result.output:
                     print(result.output.rstrip())
             return _operation_exit_code(result)
-        catalog_hash = hashlib.sha256(catalog_path.read_bytes()).hexdigest()
         if not isinstance(adapter, RuntimeAdapter):
             raise CapabilityUnavailable(
                 f"adapter does not provide plan operations: {adapter.id}"

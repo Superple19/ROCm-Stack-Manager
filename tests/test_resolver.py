@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 from rocm_stack_manager.core.resolver import build_resolver_command, run_resolver
+from rocm_stack_manager.core.identity import candidate_hash
 
 
 class CoreResolverTests(unittest.TestCase):
@@ -54,6 +55,35 @@ class CoreResolverTests(unittest.TestCase):
         self.assertEqual(result.candidate_hash, "core-hash")
         self.assertFalse(result.as_dict()["installation_performed"])
         self.assertEqual(result.as_dict()["promotion"], "none")
+
+    def test_runner_preserves_target_catalog_and_adapter_binding(self):
+        completed = subprocess.CompletedProcess(
+            ["python", "-m", "pip"],
+            0,
+            stdout="Would install torch",
+            stderr="",
+        )
+        result = run_resolver(
+            self.target,
+            self.candidate,
+            catalog_hash="catalog-hash",
+            adapter_id="comfyui",
+            target_gfx="gfx1201",
+            runner=lambda *args, **kwargs: completed,
+        )
+
+        self.assertEqual(
+            result.binding,
+            {
+                "target_root": "C:\\target",
+                "target_python": "C:\\target\\python.exe",
+                "target_platform": "windows",
+                "target_gfx": "gfx1201",
+                "candidate_hash": candidate_hash(self.candidate),
+                "catalog_hash": "catalog-hash",
+                "adapter_id": "comfyui",
+            },
+        )
 
     def test_artifact_only_candidate_cannot_resolve(self):
         candidate = dict(self.candidate, candidate_kind="artifact_only", package_specs=[])
