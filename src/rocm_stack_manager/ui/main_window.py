@@ -16,7 +16,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def __init__(self, service=None, parent=None):
         super().__init__(parent)
         self.service = service or ManagerService()
-        self.thread_pool = QtCore.QThreadPool.globalInstance()
+        self.thread_pool = QtCore.QThreadPool(self)
         self._tasks = set()
         self._generation = 0
         self._candidates = []
@@ -29,6 +29,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self._build_ui()
         if hasattr(self.service, "host_hardware"):
             QtCore.QTimer.singleShot(0, self._probe_host_hardware)
+
+    def closeEvent(self, event):
+        self._generation += 1
+        for task in self._tasks:
+            task.signals.blockSignals(True)
+        self.thread_pool.clear()
+        self.thread_pool.waitForDone(2000)
+        self._tasks.clear()
+        super().closeEvent(event)
 
     def _build_ui(self):
         self.setWindowTitle("ROCm Stack Manager")
@@ -251,7 +260,7 @@ class MainWindow(QtWidgets.QMainWindow):
     @staticmethod
     def _result_failed(result):
         returncode = getattr(result, "returncode", None)
-        if returncode is not None and returncode != 0:
+        if getattr(result, "applied", False) and returncode != 0:
             return True
         runtime_status = getattr(result, "runtime_status", None)
         hardware_status = getattr(result, "hardware_status", None)

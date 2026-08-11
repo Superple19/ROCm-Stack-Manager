@@ -66,6 +66,14 @@ class UiTests(unittest.TestCase):
         self.assertTrue(window._result_failed(result))
         window.close()
 
+    def test_applied_result_without_return_code_is_failure(self):
+        window = MainWindow()
+        failed = type("Result", (), {"applied": True, "returncode": None})()
+        dry_run = type("Result", (), {"applied": False, "returncode": None})()
+        self.assertTrue(window._result_failed(failed))
+        self.assertFalse(window._result_failed(dry_run))
+        window.close()
+
     def test_stale_async_result_is_discarded_after_generation_changes(self):
         window = MainWindow()
         marker = []

@@ -287,6 +287,7 @@ def apply_install(
             return InstallResult(
                 plan=plan,
                 applied=True,
+                returncode=1,
                 backup_path=str(backup.path),
                 staging_path=str(staged.root),
                 staged_command=staged_command,
@@ -318,6 +319,7 @@ def apply_install(
         return InstallResult(
             plan=plan,
             applied=True,
+            returncode=1,
             backup_path=str(backup.path),
             staging_path=str(staged.root),
             staged_command=staged_command,
@@ -452,7 +454,7 @@ def apply_restore(target, backup, timeout=3600):
             timeout=timeout,
         )
     except (OSError, subprocess.TimeoutExpired) as error:
-        return InstallResult(plan=plan, applied=True, output=f"{type(error).__name__}: {error}")
+        return InstallResult(plan=plan, applied=True, returncode=1, output=f"{type(error).__name__}: {error}")
     return InstallResult(
         plan=plan,
         applied=True,
@@ -491,6 +493,7 @@ def apply_extension_restore(target, backup: ExtensionBackupSnapshot, timeout=360
         return InstallResult(
             plan=plan,
             applied=True,
+            returncode=1,
             backup_path=str(backup.path),
             output=f"{type(error).__name__}: {error}",
         )
