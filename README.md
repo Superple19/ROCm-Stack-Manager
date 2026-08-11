@@ -120,6 +120,9 @@ undetected targets require an explicit `--gfx` value.
 Automatic catalog fetch requires the configured Matrix source to be reachable
 and publicly readable. If it is unavailable, use `--catalog` with a local
 Matrix checkout or set `ROCM_MATRIX_CATALOG_URL` to a trusted mirror.
+For the default GitHub source, the manager resolves `main` to a commit SHA
+before downloading the catalog so each cached snapshot uses an immutable raw
+revision; the resolved revision is recorded in the cache manifest.
 
 The `inventory` command reads installed distributions from the selected target
 Python and classifies them against one candidate. Compiled extensions without

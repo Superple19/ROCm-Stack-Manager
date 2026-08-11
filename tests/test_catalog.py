@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from rocm_stack_manager.core.catalog import (
-    DEFAULT_MATRIX_RAW_BASE_URL,
+    DEFAULT_MATRIX_REVISION_URL,
     MATRIX_CATALOG_URL_ENV,
     CatalogError,
     ensure_catalog,
@@ -120,13 +120,16 @@ class CatalogTests(unittest.TestCase):
 
     def test_default_source_is_used_when_base_url_is_none(self):
         matrix_bytes = json.dumps(_matrix()).encode("utf-8")
+        revision = "a" * 40
+        revision_base = f"https://raw.githubusercontent.com/Superple19/rocm-evidence-matrix/{revision}"
         document = {
             "schema_version": 1,
             "artifacts": [{"id": "compatibility_matrix", "path": "data/matrix.json", "schema": "schemas/compatibility-matrix.schema.json", "schema_version": 1, "sha256": hashlib.sha256(matrix_bytes).hexdigest()}],
         }
         responses = {
-            f"{DEFAULT_MATRIX_RAW_BASE_URL}/data/catalog.json": json.dumps(document).encode("utf-8"),
-            f"{DEFAULT_MATRIX_RAW_BASE_URL}/data/matrix.json": matrix_bytes,
+            DEFAULT_MATRIX_REVISION_URL: json.dumps({"sha": revision}).encode("utf-8"),
+            f"{revision_base}/data/catalog.json": json.dumps(document).encode("utf-8"),
+            f"{revision_base}/data/matrix.json": matrix_bytes,
         }
 
         def download(url):
@@ -145,10 +148,10 @@ class CatalogTests(unittest.TestCase):
                     base_url=None,
                 )
                 self.assertTrue(path.is_file())
-                self.assertIn(
-                    f"{DEFAULT_MATRIX_RAW_BASE_URL}/data/catalog.json",
-                    [call.args[0] for call in fetch.call_args_list],
-                )
+                manifest = json.loads((Path(directory) / "cache" / "source-manifest.json").read_text(encoding="utf-8"))
+                self.assertEqual(manifest["revision"], revision)
+                self.assertIn(f"{DEFAULT_MATRIX_REVISION_URL}", [call.args[0] for call in fetch.call_args_list])
+                self.assertIn(f"{revision_base}/data/catalog.json", [call.args[0] for call in fetch.call_args_list])
 
     def test_environment_source_overrides_default(self):
         matrix_bytes = json.dumps(_matrix()).encode("utf-8")

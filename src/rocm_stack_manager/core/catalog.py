@@ -23,6 +23,10 @@ class CatalogError(ValueError):
 DEFAULT_MATRIX_RAW_BASE_URL = (
     "https://raw.githubusercontent.com/Superple19/rocm-evidence-matrix/main"
 )
+DEFAULT_MATRIX_REVISION_URL = (
+    "https://api.github.com/repos/Superple19/rocm-evidence-matrix/commits/main"
+)
+DEFAULT_MATRIX_RAW_REVISION_URL = "https://raw.githubusercontent.com/Superple19/rocm-evidence-matrix"
 MATRIX_CATALOG_URL_ENV = "ROCM_MATRIX_CATALOG_URL"
 _SHA256_LENGTH = 64
 
@@ -165,7 +169,11 @@ def default_matrix_raw_base_url():
 
 
 def _download_bytes(url, timeout=30):
-    request = Request(url, headers={"User-Agent": "rocm-stack-manager/catalog"})
+    headers = {"User-Agent": "rocm-stack-manager/catalog"}
+    token = os.environ.get("GITHUB_TOKEN")
+    if token and url.lower().startswith("https://api.github.com/"):
+        headers["Authorization"] = f"Bearer {token}"
+    request = Request(url, headers=headers)
     try:
         with urlopen(request, timeout=timeout) as response:
             return response.read()
@@ -174,6 +182,19 @@ def _download_bytes(url, timeout=30):
             f"cannot fetch Matrix catalog source {url}: {error}; "
             "use --catalog for an offline file or set ROCM_MATRIX_CATALOG_URL for a trusted mirror"
         ) from error
+
+
+def _resolve_default_revision(base_url):
+    if base_url != DEFAULT_MATRIX_RAW_BASE_URL:
+        return base_url, None
+    try:
+        payload = json.loads(_download_bytes(DEFAULT_MATRIX_REVISION_URL).decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError, CatalogError) as error:
+        raise CatalogError(f"cannot resolve the Matrix main revision: {error}") from error
+    revision = payload.get("sha") if isinstance(payload, dict) else None
+    if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", revision):
+        raise CatalogError("Matrix revision response has no valid commit SHA")
+    return f"{DEFAULT_MATRIX_RAW_REVISION_URL}/{revision}", revision
 
 
 def _write_bytes_atomic(path, content):
@@ -223,7 +244,7 @@ def ensure_catalog(
         if cached is not None:
             return cached
 
-    base = str(base_url or default_matrix_raw_base_url()).rstrip("/")
+    base, revision = _resolve_default_revision(str(base_url or default_matrix_raw_base_url()).rstrip("/"))
     staging_parent = cache_root / "snapshots"
     staging_parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix="matrix-", dir=str(staging_parent)))
@@ -265,6 +286,7 @@ def ensure_catalog(
         catalog_destination = snapshot_destination / "data" / "catalog.json"
         manifest = {
             "source": base,
+            "revision": revision,
             "catalog_sha256": hashlib.sha256(catalog_bytes).hexdigest(),
             "fetched_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "artifact_count": len(required_paths),
