@@ -7,7 +7,7 @@ from ...core.install import apply_extension_restore, build_extension_restore_pla
 from ...core.hardware import probe_hardware
 from ...core.extension_verification import build_extension_verification
 from ...core.launch import LaunchOptions, LaunchPlan
-from ...core.verify import probe_target, target_python_tag
+from ...core.verify import probe_target, target_platform_tags, target_python_tag
 from .detect import detect_comfyui
 from .extensions import (
     PROFILES,
@@ -45,11 +45,22 @@ class ComfyUIAdapter:
     def python_tag(self, target):
         return target_python_tag(target)
 
+    @staticmethod
+    def _candidate_for_target(target, candidate):
+        if candidate is None:
+            return None
+        values = dict(candidate)
+        platform_tags = target_platform_tags(target)
+        if platform_tags:
+            values["platform_tags"] = list(platform_tags)
+        return values
+
     def launch(self, target, options: LaunchOptions):
         raise CapabilityUnavailable("ComfyUI launch planning is not implemented")
 
     def extension_inventory(self, target, candidate=None, profile_documents=None, extension_catalog=None):
         inventory = self.inventory(target, candidate)
+        candidate = self._candidate_for_target(target, candidate)
         return build_extension_report(inventory, profile_documents, candidate, extension_catalog)
 
     def extension_plan(
@@ -62,6 +73,7 @@ class ComfyUIAdapter:
         allow_unverified=False,
     ):
         inventory = self.inventory(target, candidate)
+        candidate = self._candidate_for_target(target, candidate)
         return build_extension_plan(
             target,
             inventory,
@@ -73,6 +85,7 @@ class ComfyUIAdapter:
         )
 
     def extension_verify(self, target, candidate, selections=(), profile_documents=None, extension_catalog=None):
+        candidate = self._candidate_for_target(target, candidate)
         plan = self.extension_plan(target, candidate, selections, profile_documents, extension_catalog)
         runtime = self.verify(target)
         hardware = self.hardware(target)

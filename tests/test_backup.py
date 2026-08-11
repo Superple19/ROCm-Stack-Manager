@@ -23,6 +23,7 @@ from rocm_stack_manager.core.install import (
     build_restore_plan,
 )
 from rocm_stack_manager.cli import parse_args
+from rocm_stack_manager.ui.services import ManagerService
 
 
 class BackupAndApplyTests(unittest.TestCase):
@@ -148,6 +149,26 @@ class BackupAndApplyTests(unittest.TestCase):
             with self.assertRaises(BackupError):
                 load_backup(backup_path, materialize=False)
             self.assertFalse(requirements_path.exists())
+
+    def test_ui_extension_restore_dry_run_does_not_materialize_requirements(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "target").mkdir()
+            target = self._target(root / "target")
+            backup_path = root / "extensions.json"
+            backup_path.write_text(
+                json.dumps({
+                    "kind": "extensions",
+                    "requirements": ["bitsandbytes==0.50.0"],
+                    "requirements_path": "extensions.txt",
+                }),
+                encoding="utf-8",
+            )
+            service = ManagerService()
+            service.target = target
+            with self.assertRaises(BackupError):
+                service.restore_extensions(backup_path)
+            self.assertFalse((root / "extensions.txt").exists())
 
     def test_load_backup_resolves_relative_requirements_path(self):
         with tempfile.TemporaryDirectory() as directory:

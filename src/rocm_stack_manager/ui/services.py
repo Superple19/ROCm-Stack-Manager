@@ -249,7 +249,7 @@ class ManagerService:
 
     def restore_extensions(self, backup_path, *, apply=False):
         self._require_target()
-        backup = load_extension_backup(backup_path)
+        backup = load_extension_backup(backup_path, materialize=apply)
         if apply:
             return apply_extension_restore(self.target, backup)
         return InstallResult(plan=build_extension_restore_plan(self.target, backup))

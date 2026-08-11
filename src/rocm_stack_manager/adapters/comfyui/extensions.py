@@ -233,6 +233,9 @@ def _artifact_matches(artifact, candidate):
         return False
     platform_tag = artifact.get("platform_tag", "")
     platform = candidate.get("platform")
+    supported_platform_tags = set(candidate.get("platform_tags") or ())
+    if supported_platform_tags and platform_tag not in {"any", "source"}:
+        return platform_tag in supported_platform_tags
     if platform == "windows":
         return platform_tag.startswith("win") or platform_tag in {"any", "source"}
     if platform == "linux":

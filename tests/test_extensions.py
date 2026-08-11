@@ -36,6 +36,43 @@ class ExtensionReportTests(unittest.TestCase):
         self.assertEqual(bitsandbytes["available_versions"], ["0.48.2"])
         self.assertEqual(bitsandbytes["latest_artifact"]["version"], "0.48.2")
 
+    def test_target_platform_tags_select_one_windows_architecture(self):
+        inventory = PackageInventory(Path("C:/target"), None, (), "detected")
+        catalog = {
+            "extensions": [{
+                "id": "extension:bitsandbytes:0.50.0",
+                "extension": "bitsandbytes",
+                "package_name": "bitsandbytes",
+                "version": "0.50.0",
+                "python_tags": ["py3"],
+                "platform_tags": ["win_amd64", "win_arm64"],
+                "artifacts": [
+                    {"candidate_id": "amd64", "python_tag": "py3", "platform_tag": "win_amd64", "url": "https://example.test/amd64.whl", "requires_dist": []},
+                    {"candidate_id": "arm64", "python_tag": "py3", "platform_tag": "win_arm64", "url": "https://example.test/arm64.whl", "requires_dist": []},
+                ],
+                "artifact_urls": ["https://example.test/amd64.whl", "https://example.test/arm64.whl"],
+            }]
+        }
+        candidate = {
+            "platform": "windows",
+            "python_tag": "cp312",
+            "platform_tags": ["win_amd64"],
+            "rocm_version": "10.1.0",
+        }
+        report = build_extension_report(inventory, candidate=candidate, extension_catalog=catalog)
+        bitsandbytes = next(item for item in report["extensions"] if item["id"] == "bitsandbytes")
+        self.assertEqual(bitsandbytes["target_match"], "matched")
+        self.assertEqual(bitsandbytes["latest_artifact"]["artifacts"][0]["url"], "https://example.test/amd64.whl")
+        plan = build_extension_plan(
+            type("Target", (), {"root": Path("C:/target"), "python_executable": Path("C:/target/python.exe")})(),
+            inventory,
+            {**candidate, "artifact_available": True, "candidate_kind": "installable"},
+            extension_catalog=catalog,
+            selections=("bitsandbytes",),
+            allow_unverified=True,
+        )
+        self.assertEqual(plan.commands[0]["command"][-1], "https://example.test/amd64.whl")
+
     def test_compiled_extensions_remain_unknown(self):
         inventory = PackageInventory(
             Path("C:/target"),
