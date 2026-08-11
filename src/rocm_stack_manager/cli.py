@@ -447,6 +447,8 @@ def main(argv=None):
             if args.action == "apply":
                 if not args.apply:
                     raise InstallationError("extensions apply requires --apply")
+                if not args.selections:
+                    raise InstallationError("extensions apply requires at least one --extension")
                 if candidate is None:
                     raise CatalogError("extensions apply requires a Matrix catalog and --candidate")
                 if not isinstance(adapter, ExtensionInstaller):

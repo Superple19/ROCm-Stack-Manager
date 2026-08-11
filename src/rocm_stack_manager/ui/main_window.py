@@ -433,11 +433,23 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
     def _extension_plan(self):
+        selections = self._selected_extensions()
+        if not selections:
+            self._show_error("select at least one extension before building an extension plan")
+            return
         self._run(
             "Build extension plan",
-            lambda: self.service.extension_plan(self._candidate),
+            lambda: self.service.extension_plan(self._candidate, selections),
             self._display_extension_plan,
         )
+
+    def _selected_extensions(self):
+        selected = []
+        for row in range(self.extension_table.rowCount()):
+            item = self.extension_table.item(row, 0)
+            if item and item.checkState() == QtCore.Qt.CheckState.Checked:
+                selected.append(item.data(QtCore.Qt.ItemDataRole.UserRole) or item.text())
+        return tuple(selected)
 
     def _display_extension_inventory(self, report):
         records = report.get("extensions", [])
@@ -462,7 +474,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 extension.get("reason") or "",
             )
             for column, value in enumerate(values):
-                self.extension_table.setItem(row, column, QtWidgets.QTableWidgetItem(str(value)))
+                item = QtWidgets.QTableWidgetItem(str(value))
+                if column == 0:
+                    item.setData(QtCore.Qt.ItemDataRole.UserRole, extension.get("id"))
+                    item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
+                    item.setCheckState(QtCore.Qt.CheckState.Unchecked)
+                self.extension_table.setItem(row, column, item)
         status = report.get("status", "unknown")
         self.extension_summary.setText(f"Inventory: {status} | {len(records)} known extensions")
         self._append_json({"extension_inventory": report})
@@ -513,6 +530,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self,
             "Confirm extension installation",
             "Only Matrix evidence-backed extensions will be installed.\n"
+            f"Selected extensions: {', '.join(self._extension_plan_result.selections)}\n"
+            f"Selection hash: {self._extension_plan_result.selection_hash}\n\n"
             "A separate extension backup will be created first.\n\nContinue?",
             QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
             QtWidgets.QMessageBox.StandardButton.No,

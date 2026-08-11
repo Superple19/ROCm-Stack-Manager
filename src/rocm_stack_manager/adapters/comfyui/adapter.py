@@ -87,6 +87,8 @@ class ComfyUIAdapter:
         )
 
     def create_extension_backup(self, target, plan, destination=None):
+        if not plan.selections:
+            raise CapabilityUnavailable("extension apply requires explicit extension selections")
         blocked = [
             item
             for item in plan.extensions

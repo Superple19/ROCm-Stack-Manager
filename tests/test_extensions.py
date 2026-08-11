@@ -288,6 +288,7 @@ class ExtensionReportTests(unittest.TestCase):
             Path("C:/target"),
             {"id": "candidate"},
             ({"id": "bitsandbytes", "status": "unverified"},),
+            selections=("bitsandbytes",),
         )
         backup = type("Backup", (), {"path": Path("C:/backup.json")})()
         target = type("Target", (), {"comfyui_dir": Path("C:/target")})()
@@ -301,6 +302,7 @@ class ExtensionReportTests(unittest.TestCase):
             {"id": "candidate"},
             ({"id": "bitsandbytes", "status": "installable"},),
             ({"extension_id": "bitsandbytes", "command": ["python", "-m", "pip", "install", "pkg"]},),
+            selections=("bitsandbytes",),
         )
         backup = type("Backup", (), {"path": Path("C:/backup.json")})()
         target = type(
@@ -323,3 +325,25 @@ class ExtensionReportTests(unittest.TestCase):
         self.assertIsInstance(result, ExtensionInstallResult)
         self.assertEqual(result.returncode, 0)
         self.assertEqual(run.call_args.args[0][0], "python")
+
+    def test_pep440_version_order_does_not_use_lexical_comparison(self):
+        from rocm_stack_manager.adapters.comfyui.extensions import _version_compare
+
+        self.assertGreater(_version_compare("2.10", "2.9"), 0)
+        self.assertTrue(
+            __import__("rocm_stack_manager.adapters.comfyui.extensions", fromlist=["_requirement_satisfied"])
+            ._requirement_satisfied(">=2.9,<3", "2.10")
+        )
+
+    def test_apply_requires_explicit_selection(self):
+        plan = ExtensionPlan(
+            Path("C:/target"),
+            {"id": "candidate"},
+            ({"id": "bitsandbytes", "status": "installable"},),
+            ({"extension_id": "bitsandbytes", "command": ["python", "-m", "pip", "install", "pkg"]},),
+        )
+        backup = type("Backup", (), {"path": Path("C:/backup.json")})()
+        target = type("Target", (), {"comfyui_dir": Path("C:/target")})()
+
+        with self.assertRaisesRegex(ValueError, "explicit extension selections"):
+            apply_extension_plan(target, plan, backup)

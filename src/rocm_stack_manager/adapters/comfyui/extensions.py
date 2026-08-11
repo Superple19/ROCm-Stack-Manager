@@ -1,10 +1,15 @@
 """Independent ComfyUI extension profiles and evidence-gated planning."""
 
 from dataclasses import dataclass
+import hashlib
+import json
 from pathlib import Path
 import re
 import subprocess
 from urllib.parse import urlparse
+
+from packaging.specifiers import InvalidSpecifier, SpecifierSet
+from packaging.version import InvalidVersion, Version
 
 from ...core.backup import ExtensionBackupSnapshot
 from ...core.identity import extension_candidate_id
@@ -148,21 +153,30 @@ def _constraint_mismatches(document, constraint, candidate):
 
 
 def _version_key(value):
-    parts = []
-    for token in re.split(r"[^0-9]+", str(value or "")):
-        parts.append((0, int(token)) if token else (1, 0))
-    return tuple(parts)
+    try:
+        return (0, Version(str(value)))
+    except InvalidVersion:
+        return (1, str(value or ""))
 
 
 _REQUIREMENT_RE = re.compile(r"^\s*([A-Za-z0-9_.-]+)\s*(.*)$")
 
 
 def _version_compare(left, right):
-    left_key = (str(left), _version_key(left))
-    right_key = (str(right), _version_key(right))
-    if left_key < right_key:
+    try:
+        left_version = Version(str(left))
+        right_version = Version(str(right))
+    except InvalidVersion:
+        left_text = str(left)
+        right_text = str(right)
+        if left_text < right_text:
+            return -1
+        if left_text > right_text:
+            return 1
+        return 0
+    if left_version < right_version:
         return -1
-    if left_key > right_key:
+    if left_version > right_version:
         return 1
     return 0
 
@@ -170,28 +184,10 @@ def _version_compare(left, right):
 def _requirement_satisfied(specifier, version):
     if not specifier:
         return True
-    for clause in str(specifier).split(","):
-        clause = clause.strip()
-        match = re.match(r"(===|==|!=|>=|<=|>|<)\s*(.+)$", clause)
-        if not match:
-            return False
-        operator, expected = match.groups()
-        if operator == "==" and expected.endswith(".*"):
-            satisfied = str(version).startswith(expected[:-2])
-        else:
-            comparison = _version_compare(version, expected)
-            satisfied = {
-                "===": str(version) == expected,
-                "==": comparison == 0,
-                "!=": comparison != 0,
-                ">=": comparison >= 0,
-                "<=": comparison <= 0,
-                ">": comparison > 0,
-                "<": comparison < 0,
-            }[operator]
-        if not satisfied:
-            return False
-    return True
+    try:
+        return Version(str(version)) in SpecifierSet(str(specifier))
+    except (InvalidSpecifier, InvalidVersion):
+        return False
 
 
 def _parse_requirement(raw):
@@ -440,6 +436,8 @@ class ExtensionPlan:
     commands: tuple[dict, ...] = ()
     warnings: tuple[str, ...] = ()
     allow_unverified: bool = False
+    selections: tuple[str, ...] = ()
+    selection_hash: str | None = None
 
     def as_dict(self):
         return {
@@ -449,6 +447,8 @@ class ExtensionPlan:
             "commands": list(self.commands),
             "warnings": list(self.warnings),
             "allow_unverified": self.allow_unverified,
+            "selections": list(self.selections),
+            "selection_hash": self.selection_hash,
             "network_access": False,
             "installation_performed": False,
         }
@@ -588,6 +588,7 @@ def build_extension_plan(
 
     profile_documents = profile_documents or {}
     selected = set(selections)
+    selected_ids = tuple(sorted(selected))
     known = {profile.id for profile in PROFILES}
     unknown = selected - known
     if unknown:
@@ -624,6 +625,17 @@ def build_extension_plan(
         commands=tuple(commands),
         warnings=tuple(warnings),
         allow_unverified=allow_unverified,
+        selections=selected_ids,
+        selection_hash=hashlib.sha256(
+            json.dumps(
+                {
+                    "candidate_hash": candidate.get("candidate_hash"),
+                    "selections": list(selected_ids),
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest(),
     )
 
 
@@ -641,6 +653,9 @@ def package_names_for_extensions(extension_ids=()):
 
 def apply_extension_plan(target, plan, backup, timeout=3600):
     """Apply an installable plan or an explicitly approved preflight plan."""
+
+    if not plan.selections:
+        raise ValueError("extension apply requires explicit extension selections")
 
     blocked = [
         item
