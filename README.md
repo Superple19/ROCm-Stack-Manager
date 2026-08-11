@@ -74,6 +74,9 @@ python -m rocm_stack_manager candidates `
 python -m rocm_stack_manager plan `
   --target C:\path\to\comfyui-portable `
   --platform windows --candidate <candidate-id>
+python -m rocm_stack_manager resolve `
+  --target C:\path\to\comfyui-portable `
+  --platform windows --candidate <candidate-id>
 python -m rocm_stack_manager restore `
   --target C:\path\to\comfyui-portable `
   --backup C:\path\to\backup\packages-<timestamp>.json
@@ -121,12 +124,12 @@ The `inventory` command reads installed distributions from the selected target
 Python and classifies them against one candidate. Compiled extensions without
 matching evidence remain `unknown`; they are never assumed compatible.
 The `extensions` command reports known ComfyUI extensions from local inventory
-and, when available, Matrix-observed artifact versions and target wheel-tag
-matches. With `--catalog`, it also displays the Matrix extension profile and
-its claim/evidence status. It does not contact package hosts, install
-extensions, or treat an installed extension as compatible without ABI/runtime
-evidence. `not_collected`, `artifact_available`, and compatibility evidence
-remain separate states.
+and Matrix-observed artifact versions and target wheel-tag matches. It loads
+the public Matrix catalog automatically unless `--offline` is provided. It
+does not contact package hosts for extension artifacts, install extensions, or
+treat an installed extension as compatible without ABI/runtime evidence.
+`not_collected`, `artifact_available`, and compatibility evidence remain
+separate states.
 `extensions plan` adds the selected core candidate and produces a read-only
 extension installation plan. It emits commands only when the Matrix profile
 contains an exact source, evidence reference, artifact claim, and matching
@@ -166,6 +169,10 @@ and is dry-run by default. It reinstalls recorded versions with
 The `verify` command executes only the selected target's Python interpreter. It
 does not call a globally installed ROCm executable; host GPU state is reported
 separately from target-local Torch, HIP, and ROCm package metadata.
+The `resolve` command runs one selected core candidate through
+`pip --dry-run --ignore-installed`. It never modifies the target, does not
+write Matrix evidence, and returns `resolver_verified` or `resolver_failed`
+for that candidate only. Use `--output` to save an explicit local result.
 
 The optional PySide6 interface is an inspection and safety-gated operation
 layer over the same core services. It supports target detection, Matrix

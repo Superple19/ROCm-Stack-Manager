@@ -10,6 +10,25 @@ from rocm_stack_manager.core.verify import RuntimeObservation
 
 
 class CliTests(unittest.TestCase):
+    def test_resolve_command_accepts_exact_candidate(self):
+        args = cli.parse_args(
+            [
+                "resolve",
+                "--target",
+                "target",
+                "--candidate",
+                "candidate-id",
+            ]
+        )
+
+        self.assertEqual(args.command, "resolve")
+        self.assertEqual(args.candidate, "candidate-id")
+
+    def test_extension_report_can_be_explicitly_offline(self):
+        args = cli.parse_args(["extensions", "report", "--target", "target", "--offline"])
+
+        self.assertTrue(args.offline)
+
     def test_operation_exit_code_reports_applied_failure(self):
         failed = type("Result", (), {"applied": True, "returncode": 1})()
         interrupted = type("Result", (), {"applied": True, "returncode": None})()
@@ -84,13 +103,47 @@ class CliTests(unittest.TestCase):
                 )(),
             ):
                 with redirect_stdout(output), redirect_stderr(error):
-                    result = cli.main(["extensions", "report", "--target", str(root)])
+                    result = cli.main(["extensions", "report", "--target", str(root), "--offline"])
 
             self.assertEqual(result, 0)
             self.assertEqual(error.getvalue(), "")
             self.assertIn("Mode: local inventory only", output.getvalue())
             self.assertIn("Matrix artifacts: not collected", output.getvalue())
             self.assertIn("not installed", output.getvalue())
+
+    def test_extension_report_loads_public_catalog_by_default(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            comfyui = root / "ComfyUI"
+            comfyui.mkdir()
+            (comfyui / "main.py").write_text("", encoding="utf-8")
+            output = io.StringIO()
+            catalog_path = root / "catalog.json"
+            with patch("rocm_stack_manager.cli.ensure_catalog", return_value=catalog_path) as ensure:
+                with patch(
+                    "rocm_stack_manager.cli.load_catalog",
+                    return_value={"_comfyui_extension_profiles": {}, "_extension_catalog": {}},
+                ):
+                    with patch(
+                        "rocm_stack_manager.adapters.comfyui.adapter.collect_inventory",
+                        return_value=type(
+                            "Inventory",
+                            (),
+                            {
+                                "target_root": root,
+                                "status": "detected",
+                                "error": None,
+                                "packages": (),
+                            },
+                        )(),
+                    ):
+                        with redirect_stdout(output):
+                            result = cli.main(["extensions", "report", "--target", str(root)])
+
+            self.assertEqual(result, 0)
+            ensure.assert_called_once()
+            self.assertIn("target inventory + Matrix catalog", output.getvalue())
+            self.assertIn("Matrix artifacts: not collected", output.getvalue())
 
 
 if __name__ == "__main__":

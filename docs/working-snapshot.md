@@ -65,6 +65,7 @@ Examples:
 .\.venv\Scripts\python.exe -m rocm_stack_manager candidates --target C:\path\to\target --catalog C:\path\to\catalog.json --channel stable
 .\.venv\Scripts\python.exe -m rocm_stack_manager plan --target C:\path\to\target --catalog C:\path\to\catalog.json --candidate <candidate-id>
 .\.venv\Scripts\python.exe -m rocm_stack_manager install --target C:\path\to\target --catalog C:\path\to\catalog.json --candidate <candidate-id>
+.\.venv\Scripts\python.exe -m rocm_stack_manager resolve --target C:\path\to\target --candidate <candidate-id>
 ```
 
 The last command is a dry-run. `--apply` is required to execute pip. The
@@ -77,19 +78,26 @@ The target probe is scoped to the selected interpreter. A result such as
 `tensor_smoke_status=passed` describes that target only; it is not a claim for
 all GFX targets.
 
+`plan` only builds the exact install command. `resolve` is the separate
+targeted `pip --dry-run --ignore-installed` preflight and does not install or
+promote evidence to Matrix.
+
 ## Extension flow
 
 Extensions are independent from core ROCm/Torch packages:
 
 ```powershell
-.\.venv\Scripts\python.exe -m rocm_stack_manager extensions report --target C:\path\to\target --catalog C:\path\to\catalog.json
+.\.venv\Scripts\python.exe -m rocm_stack_manager extensions report --target C:\path\to\target
+.\.venv\Scripts\python.exe -m rocm_stack_manager extensions report --target C:\path\to\target --offline
 .\.venv\Scripts\python.exe -m rocm_stack_manager extensions plan --target C:\path\to\target --catalog C:\path\to\catalog.json --candidate <candidate-id> --extension bitsandbytes
 .\.venv\Scripts\python.exe -m rocm_stack_manager extensions resolve --target C:\path\to\target --catalog C:\path\to\catalog.json --candidate <candidate-id> --extension bitsandbytes
 .\.venv\Scripts\python.exe -m rocm_stack_manager extensions verify --target C:\path\to\target --catalog C:\path\to\catalog.json --candidate <candidate-id> --extension bitsandbytes --output evidence.json
 ```
 
-`report` is local inventory. `plan` is read-only and emits an install command
-only when exact source, ABI, platform, GFX, and Matrix evidence agree.
+`report` loads the public Matrix catalog automatically and combines it with
+local inventory. Add `--offline` for local inventory only. `plan` is read-only
+and emits an install command only when exact source, ABI, platform, GFX, and
+Matrix evidence agree.
 `resolve` is a targeted `pip --dry-run`; it never installs or promotes an
 extension. `verify` runs selected imports and a small tensor smoke test and
 exports evidence for human review.

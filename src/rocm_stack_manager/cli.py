@@ -28,6 +28,7 @@ from .core.install import (
     dry_run_install,
 )
 from .core.extension_resolver import run_extension_resolver
+from .core.resolver import run_resolver
 from .core.planning import PlanningError
 
 
@@ -80,6 +81,13 @@ def parse_args(argv=None):
     _add_adapter_option(verify)
     verify.add_argument("--json", action="store_true", dest="json_output")
 
+    resolve = subparsers.add_parser("resolve", help="Run a targeted core pip dry-run")
+    _add_catalog_options(resolve)
+    _add_adapter_option(resolve)
+    resolve.add_argument("--candidate", required=True, help="Exact Matrix candidate ID")
+    resolve.add_argument("--json", action="store_true", dest="json_output")
+    resolve.add_argument("--output", type=Path, help="Optional JSON output path")
+
     candidates = subparsers.add_parser("candidates", help="List Matrix package candidates")
     _add_catalog_options(candidates)
     _add_adapter_option(candidates)
@@ -113,6 +121,11 @@ def parse_args(argv=None):
         help="Matrix raw repository base URL (or ROCM_MATRIX_CATALOG_URL) used when catalog is omitted",
     )
     extensions.add_argument("--refresh-catalog", action="store_true")
+    extensions.add_argument(
+        "--offline",
+        action="store_true",
+        help="Do not fetch Matrix data; report only target-local inventory",
+    )
     extensions.add_argument("--candidate", help="Optional exact Matrix candidate ID")
     extensions.add_argument("--extension", dest="selections", action="append", default=[])
     extensions.add_argument("--backup", type=Path, help="Extension backup JSON for restore")
@@ -331,7 +344,10 @@ def main(argv=None):
 
             extension_profiles = {}
             catalog = None
-            needs_catalog = bool(args.catalog) or args.action in {"plan", "resolve", "verify", "apply"} or bool(args.candidate)
+            needs_catalog = bool(args.catalog) or (
+                not args.offline
+                and (args.action in {"report", "plan", "resolve", "verify", "apply"} or bool(args.candidate))
+            )
             if needs_catalog:
                 catalog_path = ensure_catalog(
                     args.catalog,
@@ -348,7 +364,7 @@ def main(argv=None):
             candidate = None
             if args.candidate:
                 if catalog is None:
-                    raise CatalogError("--candidate requires --catalog")
+                    raise CatalogError("--candidate requires a Matrix catalog")
                 python_tag = (
                     adapter.python_tag(target)
                     if isinstance(adapter, PythonPackageAdapter)
@@ -367,7 +383,7 @@ def main(argv=None):
                 )
             if args.action == "resolve":
                 if candidate is None:
-                    raise CatalogError("extensions resolve requires --catalog and --candidate")
+                    raise CatalogError("extensions resolve requires a Matrix catalog and --candidate")
                 if not args.selections:
                     raise ValueError("extensions resolve requires at least one --extension")
                 plan = adapter.extension_plan(
@@ -394,7 +410,7 @@ def main(argv=None):
                 return 0 if all(result.status in {"resolver_verified", "not_applicable"} for result in results) else 2
             if args.action == "verify":
                 if candidate is None:
-                    raise CatalogError("extensions verify requires --catalog and --candidate")
+                    raise CatalogError("extensions verify requires a Matrix catalog and --candidate")
                 if not args.selections:
                     raise ValueError("extensions verify requires at least one --extension")
                 if not isinstance(adapter, ExtensionVerifier):
@@ -425,7 +441,7 @@ def main(argv=None):
                 if not args.apply:
                     raise InstallationError("extensions apply requires --apply")
                 if candidate is None:
-                    raise CatalogError("extensions apply requires --catalog and --candidate")
+                    raise CatalogError("extensions apply requires a Matrix catalog and --candidate")
                 if not isinstance(adapter, ExtensionInstaller):
                     raise CapabilityUnavailable(
                         f"adapter does not provide extension installation: {adapter.id}"
@@ -453,7 +469,7 @@ def main(argv=None):
                 return _operation_exit_code(result)
             if args.action == "plan":
                 if candidate is None:
-                    raise CatalogError("extensions plan requires --catalog and --candidate")
+                    raise CatalogError("extensions plan requires a Matrix catalog and --candidate")
                 plan = adapter.extension_plan(
                     target,
                     candidate,
@@ -486,7 +502,10 @@ def main(argv=None):
                 print(json.dumps(report, indent=2, sort_keys=True))
             else:
                 print(f"Target: {report['target_root']}")
-                print("Mode: local inventory only (no network, no installation)")
+                if catalog is None:
+                    print("Mode: local inventory only (no network, no installation)")
+                else:
+                    print("Mode: target inventory + Matrix catalog (no extension installation)")
                 for extension in report["extensions"]:
                     installed = ", ".join(
                         f"{package['name']}=={package['version']}"
@@ -520,7 +539,7 @@ def main(argv=None):
             )
         python_tag = adapter.python_tag(target)
         inferred_gfx = False
-        if args.command in {"candidates", "plan", "inventory", "install"}:
+        if args.command in {"candidates", "plan", "inventory", "install", "resolve"}:
             args.gfx, inferred_gfx = _resolve_gfx(target, adapter, args.gfx)
             if inferred_gfx and not getattr(args, "json_output", False):
                 print(f"Detected target GFX: {args.gfx}")
@@ -539,6 +558,22 @@ def main(argv=None):
             return 0
 
         candidate = _candidate_for_plan(catalog, args, python_tag)
+        if args.command == "resolve":
+            result = run_resolver(target, candidate)
+            if args.output:
+                args.output.parent.mkdir(parents=True, exist_ok=True)
+                temporary = args.output.with_suffix(args.output.suffix + ".tmp")
+                temporary.write_text(json.dumps(result.as_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+                temporary.replace(args.output)
+            if args.json_output or args.output:
+                print(json.dumps(result.as_dict(), indent=2, sort_keys=True))
+            else:
+                print(f"Candidate: {result.candidate_id}")
+                print(f"Resolver: {result.status}")
+                print("Mode: dry-run (pip was not executed for installation)")
+                if result.output:
+                    print(result.output.rstrip())
+            return 0 if result.status == "resolver_verified" else 2
         if args.command == "inventory":
             _print_inventory(adapter.inventory(target, candidate), args.json_output)
             return 0
