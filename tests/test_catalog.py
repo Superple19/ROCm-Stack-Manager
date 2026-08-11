@@ -499,6 +499,106 @@ class CatalogTests(unittest.TestCase):
 
         self.assertEqual(visible[0]["python_compatibility"], "incompatible")
 
+    def test_rejects_linux_gfx1250_stable_when_generic_versions_do_not_match(self):
+        catalog = _matrix()
+        catalog["targets"].append({
+            "gfx": "gfx1250",
+            "platforms": {
+                "linux": {
+                    "package_channels": {
+                        "stable": {
+                            "all_device_packages_available": True,
+                            "rocm_device_version": "7.14.0",
+                            "torch_device_version": "2.11.0+rocm7.14.0",
+                            "torchvision_device_version": "0.26.0+rocm7.14.0",
+                            "torchaudio_version": "2.11.0.2+rocm7.14.0",
+                            "source_id": "packages-stable-linux",
+                        }
+                    }
+                }
+            },
+        })
+        expected = {
+            "rocm": "7.14.0",
+            "rocm-sdk-core": "7.14.0",
+            "rocm-sdk-libraries": "7.14.0",
+            "rocm-sdk-device-gfx1250": "7.14.0",
+            "torch": "2.11.0+rocm7.14.0",
+            "amd-torch-device-gfx1250": "2.11.0+rocm7.14.0",
+            "torchvision": "0.26.0+rocm7.14.0",
+            "amd-torchvision-device-gfx1250": "0.26.0+rocm7.14.0",
+            "torchaudio": "2.11.0.2+rocm7.14.0",
+        }
+        packages = {
+            name: [{"version": version, "python_tag": "cp312", "platform_tag": "linux_x86_64"}]
+            for name, version in expected.items()
+        }
+        packages["torch"][0]["version"] = "2.13.0+rocm7.14.0"
+        packages["torchvision"][0]["version"] = "0.28.0+rocm7.14.0"
+        catalog["_package_snapshots"]["package_snapshots:stable-linux"] = {"packages": packages}
+
+        visible = iter_candidates(
+            catalog,
+            platform="linux",
+            gfx="gfx1250",
+            channel="stable",
+            python_tag="cp312",
+            include_incompatible=True,
+        )
+
+        self.assertEqual(len(visible), 1)
+        self.assertEqual(visible[0]["python_compatibility"], "incompatible")
+
+    def test_rejects_linux_gfx90c_nightly_when_generic_versions_do_not_match(self):
+        catalog = _matrix()
+        catalog["targets"].append({
+            "gfx": "gfx90c",
+            "platforms": {
+                "linux": {
+                    "package_channels": {
+                        "nightly": {
+                            "all_device_packages_available": True,
+                            "rocm_device_version": "10.1.0a20260807",
+                            "torch_device_version": "2.12.0+rocm10.1.0a20260807",
+                            "torchvision_device_version": "0.27.0+rocm10.1.0a20260807",
+                            "torchaudio_version": "2.11.0+rocm10.1.0a20260807",
+                            "source_id": "packages-nightly-linux",
+                        }
+                    }
+                }
+            },
+        })
+        expected = {
+            "rocm": "10.1.0a20260807",
+            "rocm-sdk-core": "10.1.0a20260807",
+            "rocm-sdk-libraries": "10.1.0a20260807",
+            "rocm-sdk-device-gfx90c": "10.1.0a20260807",
+            "torch": "2.12.0+rocm10.1.0a20260807",
+            "amd-torch-device-gfx90c": "2.12.0+rocm10.1.0a20260807",
+            "torchvision": "0.27.0+rocm10.1.0a20260807",
+            "amd-torchvision-device-gfx90c": "0.27.0+rocm10.1.0a20260807",
+            "torchaudio": "2.11.0+rocm10.1.0a20260807",
+        }
+        packages = {
+            name: [{"version": version, "python_tag": "cp312", "platform_tag": "linux_x86_64"}]
+            for name, version in expected.items()
+        }
+        packages["torch"][0]["version"] = "2.14.0a0+rocm10.1.0a20260807"
+        packages["torchvision"][0]["version"] = "0.29.0a0+rocm10.1.0a20260807"
+        catalog["_package_snapshots"]["package_snapshots:nightly-linux"] = {"packages": packages}
+
+        visible = iter_candidates(
+            catalog,
+            platform="linux",
+            gfx="gfx90c",
+            channel="nightly",
+            python_tag="cp312",
+            include_incompatible=True,
+        )
+
+        self.assertEqual(len(visible), 1)
+        self.assertEqual(visible[0]["python_compatibility"], "incompatible")
+
     def test_exposes_historical_candidate_by_exact_rocm_version(self):
         catalog = _matrix()
         catalog["_historical_candidates"] = [
