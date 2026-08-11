@@ -29,6 +29,9 @@ from ..core.install import (
 from ..core.planning import validate_plan_binding
 
 
+__all__ = ("ManagerService", "detected_gfx_targets")
+
+
 @dataclass(frozen=True)
 class CatalogState:
     path: Path

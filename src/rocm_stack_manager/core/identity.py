@@ -43,5 +43,6 @@ def extension_candidate_id(extension, version, python_tag, platform_tag, source_
         "version": str(version),
     }
     digest = _digest(identity)[:16]
-    safe = lambda value: str(value).replace(":", "_")
+    def safe(value):
+        return str(value).replace(":", "_")
     return f"extension:{safe(extension)}:{safe(version)}:{safe(python_tag)}:{safe(platform_tag)}:{digest}"

@@ -6,7 +6,7 @@ from ...core.inventory import collect_inventory
 from ...core.install import apply_extension_restore, build_extension_restore_plan, build_install_plan
 from ...core.hardware import probe_hardware
 from ...core.extension_verification import build_extension_verification
-from ...core.launch import LaunchOptions, LaunchPlan
+from ...core.launch import LaunchOptions
 from ...core.verify import probe_target, target_abi_tags, target_platform_tags, target_python_tag
 from .detect import detect_comfyui
 from .extensions import (

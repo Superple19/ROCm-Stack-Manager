@@ -238,7 +238,6 @@ def ensure_catalog(
         return Path(path).expanduser().resolve()
 
     cache_root = Path(cache_dir).expanduser().resolve() if cache_dir else default_catalog_cache_dir()
-    catalog_path = cache_root / "data" / "catalog.json"
     if not refresh:
         cached = _cached_catalog_path(cache_root)
         if cached is not None:

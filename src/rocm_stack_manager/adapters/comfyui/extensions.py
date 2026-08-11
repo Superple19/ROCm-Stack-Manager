@@ -11,7 +11,6 @@ from urllib.parse import urlparse
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
 
-from ...core.backup import ExtensionBackupSnapshot
 from ...core.identity import extension_candidate_id
 from ...core.verify import _clean_environment
 

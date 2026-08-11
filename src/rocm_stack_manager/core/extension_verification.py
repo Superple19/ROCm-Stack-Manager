@@ -1,7 +1,6 @@
 """Export target-local extension runtime and hardware verification evidence."""
 
 from datetime import datetime, timezone
-import json
 import subprocess
 
 from .verify import _clean_environment

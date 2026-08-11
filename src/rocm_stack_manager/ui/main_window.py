@@ -588,9 +588,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self._restore_path = Path(path)
         self._restore_kind = "extensions" if document.get("kind") == "extensions" else "core"
         if self._restore_kind == "extensions":
-            function = lambda: self.service.restore_extensions(path)
+            def function():
+                return self.service.restore_extensions(path)
         else:
-            function = lambda: self.service.restore_core(path)
+            def function():
+                return self.service.restore_core(path)
         self._run("Build restore dry-run", function, self._display_restore_plan)
 
     def _display_restore_plan(self, result):
@@ -612,9 +614,11 @@ class MainWindow(QtWidgets.QMainWindow):
         if answer != QtWidgets.QMessageBox.StandardButton.Yes:
             return
         if self._restore_kind == "extensions":
-            function = lambda: self.service.restore_extensions(self._restore_path, apply=True)
+            def function():
+                return self.service.restore_extensions(self._restore_path, apply=True)
         else:
-            function = lambda: self.service.restore_core(self._restore_path, apply=True)
+            def function():
+                return self.service.restore_core(self._restore_path, apply=True)
         self._run("Apply restore", function, self._display_restore_result)
 
     def _display_restore_result(self, result):

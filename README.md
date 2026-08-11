@@ -264,3 +264,28 @@ behavior separate.
 ```powershell
 python -m unittest discover -s tests -v
 ```
+
+Install the optional development quality tools with the project extra:
+
+```powershell
+python -m pip install --editable ".[dev]"
+```
+
+Run the required lint gate and the advisory analyses:
+
+```powershell
+ruff check .
+ruff format --check .
+pyright
+deptry .
+vulture src tests --min-confidence 100 --ignore-names options
+```
+
+`ruff check` is required in CI. Formatting, type checking, dependency
+analysis, and dead-code analysis are advisory while the existing codebase is
+being cleaned up. Do not run `ruff format --fix` as part of an unrelated
+behavior change. Vulture findings require review because CLI entry points and
+dynamic adapter loading can look unused to static analysis. The tools are
+development-only; the normal Manager installation does not include them.
+Import Linter and `uv` are intentionally deferred until the adapter boundaries
+and development workflow are stable.
