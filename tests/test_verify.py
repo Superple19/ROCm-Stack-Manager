@@ -28,6 +28,8 @@ class RuntimeProbeTests(unittest.TestCase):
             "cuda_available": True,
             "device_count": 1,
             "devices": [{"index": 0, "name": "AMD Radeon RX 9070 XT", "gfx": "gfx1201"}],
+            "tensor_smoke_status": "passed",
+            "tensor_smoke_error": None,
             "torch_error": None,
         }
         with tempfile.TemporaryDirectory() as directory:
@@ -41,7 +43,31 @@ class RuntimeProbeTests(unittest.TestCase):
             self.assertEqual(observation.torch_rocm_tag, "7.14.0")
             self.assertEqual(observation.rocm_packages["rocm-sdk"], "7.14.0")
             self.assertEqual(observation.devices[0]["gfx"], "gfx1201")
+            self.assertEqual(observation.tensor_smoke_status, "passed")
+            self.assertIsNone(observation.tensor_smoke_error)
             self.assertEqual(run.call_args.args[0][0], str(target.python_executable))
+
+    def test_tensor_smoke_failure_is_kept_separate_from_runtime_detection(self):
+        payload = {
+            "python_version": "3.12.10",
+            "torch_version": "2.12.0+rocm7.14.0",
+            "cuda_available": True,
+            "device_count": 1,
+            "devices": [{"index": 0, "gfx": "gfx1201"}],
+            "tensor_smoke_status": "failed",
+            "tensor_smoke_error": "RuntimeError: kernel failed",
+            "torch_error": None,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            target = self._target(Path(directory))
+            completed = type("Completed", (), {"returncode": 0, "stdout": json.dumps(payload), "stderr": ""})()
+            with patch("rocm_stack_manager.core.verify.subprocess.run", return_value=completed):
+                observation = probe_target(target)
+
+        self.assertEqual(observation.runtime_status, "detected")
+        self.assertEqual(observation.hardware_status, "detected")
+        self.assertEqual(observation.tensor_smoke_status, "failed")
+        self.assertIn("kernel failed", observation.tensor_smoke_error)
 
     def test_missing_target_python_does_not_use_global_runtime(self):
         with tempfile.TemporaryDirectory() as directory:

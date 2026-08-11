@@ -22,6 +22,8 @@ result = {
     "cuda_available": False,
     "device_count": 0,
     "devices": [],
+    "tensor_smoke_status": "not_applicable",
+    "tensor_smoke_error": None,
     "torch_error": None,
 }
 try:
@@ -44,6 +46,18 @@ else:
                 "name": getattr(properties, "name", None),
                 "gfx": getattr(properties, "gcnArchName", None),
             })
+        if result["cuda_available"] and result["device_count"]:
+            try:
+                value = torch.ones((2, 2), device="cuda")
+                product = value @ value
+                torch.cuda.synchronize()
+                expected = torch.full((2, 2), 2.0, device="cuda")
+                if not bool(torch.allclose(product, expected)):
+                    raise RuntimeError("tensor result did not match expected value")
+                result["tensor_smoke_status"] = "passed"
+            except Exception as error:
+                result["tensor_smoke_status"] = "failed"
+                result["tensor_smoke_error"] = f"{type(error).__name__}: {error}"
     except Exception as error:
         result["torch_error"] = f"{type(error).__name__}: {error}"
 
@@ -78,6 +92,8 @@ class RuntimeObservation:
     cuda_available: bool = False
     device_count: int = 0
     devices: tuple[dict, ...] = ()
+    tensor_smoke_status: str | None = None
+    tensor_smoke_error: str | None = None
     error: str | None = None
 
     def as_dict(self):
@@ -97,6 +113,8 @@ class RuntimeObservation:
             "cuda_available": self.cuda_available,
             "device_count": self.device_count,
             "devices": list(self.devices),
+            "tensor_smoke_status": self.tensor_smoke_status,
+            "tensor_smoke_error": self.tensor_smoke_error,
             "error": self.error,
         }
 
@@ -245,5 +263,7 @@ def probe_target(target, timeout=30):
         cuda_available=cuda_available,
         device_count=device_count,
         devices=devices,
+        tensor_smoke_status=result.get("tensor_smoke_status"),
+        tensor_smoke_error=result.get("tensor_smoke_error"),
         error=result.get("torch_error"),
     )

@@ -274,6 +274,9 @@ def main(argv=None):
                 print(f"HIP: {values['hip_version'] or 'not detected'}")
                 print(f"ROCm packages: {', '.join(values['rocm_packages']) or 'not detected'}")
                 print(f"Devices: {values['device_count']}")
+                print(f"Tensor smoke: {values['tensor_smoke_status'] or 'not run'}")
+                if values.get("tensor_smoke_error"):
+                    print(f"Tensor smoke error: {values['tensor_smoke_error']}")
             return 0
 
         if args.command in {"restore", "rollback"}:
