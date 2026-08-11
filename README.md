@@ -93,6 +93,9 @@ python -m rocm_stack_manager resolve `
 python -m rocm_stack_manager restore `
   --target C:\path\to\comfyui-portable `
   --backup C:\path\to\backup\packages-<timestamp>.json
+python -m rocm_stack_manager migrate-backup `
+  --backup C:\path\to\old-backup.json `
+  --output C:\path\to\backup\migrated.json
 ```
 
 The selected target is expected to contain a `ComfyUI` directory with
@@ -180,11 +183,14 @@ During an apply, stale managed ROCm and PyTorch packages are removed before
 the selected candidate is installed; unrelated application extensions remain.
 Plans warn when the selected package set does not include `torchaudio`; this is
 safe for image-only ComfyUI use but may affect audio workflows.
-The `restore` command (also available as `rollback`) accepts a backup JSON path
-and is dry-run by default. It reinstalls recorded versions with
-`--force-reinstall`; it does not remove extra packages. The backup protects
-the requirements file and its hash, but does not archive wheel bytes, so
-restore is version-pinned rather than byte-exact.
+The `restore` command (also available as `rollback`) accepts a current backup
+JSON path and is dry-run by default. It reinstalls recorded versions with
+`--force-reinstall`; it does not remove extra packages. The backup schema,
+embedded requirements, sidecar file, and SHA-256 are validated before a plan
+is produced. A dry-run never creates or repairs backup files. Backups created
+before the current schema must first be converted with `migrate-backup`, which
+never overwrites the source. Wheel bytes are not archived, so restore remains
+version-pinned rather than byte-exact.
 The `verify` command executes only the selected target's Python interpreter. It
 does not call a globally installed ROCm executable; host GPU state is reported
 separately from target-local Torch, HIP, and ROCm package metadata.

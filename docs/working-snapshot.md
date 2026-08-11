@@ -82,6 +82,22 @@ all GFX targets.
 targeted `pip --dry-run --ignore-installed` preflight and does not install or
 promote evidence to Matrix.
 
+Restore accepts only the current backup schema. Before a restore plan is
+created, the manager verifies the JSON schema version, the requirements
+sidecar SHA-256, and that the sidecar matches the embedded requirements list.
+Restore dry-runs are read-only and never create a missing sidecar. Convert an
+older backup explicitly, without overwriting it:
+
+```powershell
+.\.venv\Scripts\python.exe -m rocm_stack_manager migrate-backup `
+  --backup C:\path\to\old-backup.json `
+  --output C:\path\to\backup\migrated.json
+```
+
+The migration command only writes the new JSON and sidecar; it never installs,
+restores, or uploads anything. Restore is still version-pinned because wheel
+bytes are not archived.
+
 ## Extension flow
 
 Extensions are independent from core ROCm/Torch packages:
