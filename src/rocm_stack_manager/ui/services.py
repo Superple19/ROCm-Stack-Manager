@@ -26,6 +26,7 @@ from ..core.install import (
     build_restore_plan,
     dry_run_install,
 )
+from ..core.planning import validate_plan_binding
 
 
 @dataclass(frozen=True)
@@ -156,16 +157,36 @@ class ManagerService:
 
     def plan(self, candidate):
         self._require_target()
-        return dry_run_install(self.target, candidate)
+        return dry_run_install(
+            self.target,
+            candidate,
+            catalog_hash=self.catalog_state.catalog_sha256 if self.catalog_state else None,
+            adapter_id=self.adapter.id,
+            target_gfx=candidate.get("gfx"),
+        )
 
-    def apply_core(self, candidate, *, allow_unverified=False, backup_dir=None):
+    def apply_core(self, result, *, allow_unverified=False, backup_dir=None):
         self._require_target()
+        plan = result.plan if isinstance(result, InstallResult) else result
+        candidate = plan.candidate
+        validate_plan_binding(
+            plan,
+            self.target,
+            candidate,
+            catalog_hash=self.catalog_state.catalog_sha256 if self.catalog_state else None,
+            adapter_id=self.adapter.id,
+            target_gfx=candidate.get("gfx"),
+        )
         backup = create_backup(self.target, backup_dir)
         return apply_install(
             self.target,
             candidate,
             backup,
             allow_unverified=allow_unverified,
+            plan=plan,
+            catalog_hash=self.catalog_state.catalog_sha256 if self.catalog_state else None,
+            adapter_id=self.adapter.id,
+            target_gfx=candidate.get("gfx"),
         )
 
     def restore_core(self, backup_path, *, apply=False):

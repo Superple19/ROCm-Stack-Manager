@@ -248,6 +248,11 @@ class MainWindow(QtWidgets.QMainWindow):
             )
 
     def _display_target(self, target):
+        self._candidates = []
+        self._candidate = None
+        self._clear_plan_state()
+        self.candidate_model.set_rows(())
+        self.candidate_summary.setText("No candidates loaded")
         values = target.as_dict()
         self.target_summary.setText(
             f"Layout: {values['layout']} | Python: {values['python_executable'] or 'not found'} | "
@@ -495,7 +500,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._run(
             "Apply core packages",
             lambda: self.service.apply_core(
-                self._candidate,
+                self._core_plan,
                 allow_unverified=self.allow_unverified.isChecked(),
             ),
             self._display_apply_result,

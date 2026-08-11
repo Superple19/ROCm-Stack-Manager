@@ -6,6 +6,7 @@ from unittest.mock import patch
 from rocm_stack_manager.core.detection import detect_target
 from rocm_stack_manager.core.backup import BackupSnapshot
 from rocm_stack_manager.core.install import InstallationError, apply_install, build_install_plan, dry_run_install
+from rocm_stack_manager.core.planning import PlanningError, validate_plan_binding
 
 
 class InstallPlanTests(unittest.TestCase):
@@ -88,6 +89,64 @@ class InstallPlanTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(InstallationError):
                 build_install_plan(self._target(Path(directory)), candidate)
+
+    def test_plan_records_target_and_candidate_binding(self):
+        candidate = {
+            "id": "therock:windows:stable:gfx1201",
+            "artifact_available": True,
+            "python_compatibility": "compatible",
+            "gfx": "gfx1201",
+            "package_specs": ["torch==2.12.0"],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            target = self._target(Path(directory))
+            plan = build_install_plan(
+                target,
+                candidate,
+                catalog_hash="a" * 64,
+                adapter_id="comfyui",
+            )
+
+        self.assertEqual(plan.binding["target_root"], str(target.root))
+        self.assertEqual(plan.binding["target_python"], str(target.python_executable))
+        self.assertEqual(plan.binding["target_gfx"], "gfx1201")
+        self.assertEqual(plan.binding["catalog_hash"], "a" * 64)
+        self.assertEqual(plan.binding["adapter_id"], "comfyui")
+
+    def test_apply_rejects_plan_for_different_target(self):
+        candidate = {
+            "id": "therock:windows:stable:gfx1201",
+            "artifact_available": True,
+            "python_compatibility": "compatible",
+            "gfx": "gfx1201",
+            "wheel_urls": ["https://example.test/torch.whl"],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "a").mkdir()
+            (root / "b").mkdir()
+            target_a = self._target(root / "a")
+            target_b = self._target(root / "b")
+            plan = build_install_plan(target_a, candidate, adapter_id="comfyui")
+            backup = BackupSnapshot(root / "backup.json", root / "requirements.txt", "", ())
+
+            with self.assertRaises(PlanningError):
+                apply_install(target_b, candidate, backup, plan=plan)
+
+    def test_plan_rejects_changed_catalog_binding(self):
+        candidate = {
+            "id": "therock:windows:stable:gfx1201",
+            "artifact_available": True,
+            "python_compatibility": "compatible",
+            "gfx": "gfx1201",
+            "package_specs": ["torch==2.12.0"],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            target = self._target(Path(directory))
+            plan = build_install_plan(target, candidate, catalog_hash="a" * 64)
+
+            with self.assertRaises(PlanningError):
+                validate_plan_binding(plan, target, candidate, catalog_hash="b" * 64)
 
     def test_artifact_only_candidate_is_rejected(self):
         candidate = {

@@ -8,7 +8,7 @@ from urllib.parse import unquote, urlparse
 
 from .backup import BackupSnapshot, ExtensionBackupSnapshot
 from .inventory import collect_inventory
-from .planning import InstallPlan, PlanningError
+from .planning import InstallPlan, PlanningError, build_plan_binding, validate_plan_binding
 from .verify import _clean_environment
 
 
@@ -97,7 +97,16 @@ class InstallResult:
         return values
 
 
-def build_install_plan(target, candidate, *, allow_unverified=False):
+def build_install_plan(
+    target,
+    candidate,
+    *,
+    allow_unverified=False,
+    catalog_hash=None,
+    adapter_id=None,
+    target_platform=None,
+    target_gfx=None,
+):
     """Build a pip command without modifying the target environment."""
 
     if not candidate.get("artifact_available"):
@@ -146,19 +155,51 @@ def build_install_plan(target, candidate, *, allow_unverified=False):
         candidate=candidate,
         command=tuple(command),
         warnings=tuple(warnings),
+        binding=build_plan_binding(
+            target,
+            candidate,
+            catalog_hash=catalog_hash,
+            adapter_id=adapter_id,
+            target_platform=target_platform,
+            target_gfx=target_gfx,
+        ),
     )
 
 
-def dry_run_install(target, candidate, *, allow_unverified=False):
+def dry_run_install(target, candidate, *, allow_unverified=False, **binding):
     """Return an install command without invoking pip."""
 
-    return InstallResult(plan=build_install_plan(target, candidate, allow_unverified=allow_unverified))
+    return InstallResult(
+        plan=build_install_plan(
+            target,
+            candidate,
+            allow_unverified=allow_unverified,
+            **binding,
+        )
+    )
 
 
-def apply_install(target, candidate, backup, *, allow_unverified=False, timeout=3600):
+def apply_install(
+    target,
+    candidate,
+    backup,
+    *,
+    allow_unverified=False,
+    timeout=3600,
+    plan=None,
+    **binding,
+):
     """Run the planned pip command after an explicit backup and approval."""
 
-    plan = build_install_plan(target, candidate, allow_unverified=allow_unverified)
+    if plan is None:
+        plan = build_install_plan(
+            target,
+            candidate,
+            allow_unverified=allow_unverified,
+            **binding,
+        )
+    else:
+        validate_plan_binding(plan, target, candidate, **binding)
     if candidate.get("resolver_status") == "resolver_failed" and not allow_unverified:
         raise InstallationError("resolver evidence failed; pass --allow-unverified to apply")
     stale_packages = _stale_managed_packages(target, candidate)
