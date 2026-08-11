@@ -58,6 +58,11 @@ def validate_plan_binding(
         target_gfx=target_gfx,
     )
     actual = plan.binding
+    candidate_platform = (candidate or plan.candidate).get("platform")
+    if candidate_platform and candidate_platform != expected.get("target_platform"):
+        raise PlanningError(
+            f"cross-platform apply is not allowed: candidate={candidate_platform}, target={expected.get('target_platform')}"
+        )
     for field in ("target_root", "target_python", "target_platform", "target_gfx", "candidate_hash"):
         if actual.get(field) != expected.get(field):
             raise PlanningError(f"installation plan binding changed: {field}")

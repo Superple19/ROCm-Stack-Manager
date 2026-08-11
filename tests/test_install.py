@@ -148,6 +148,22 @@ class InstallPlanTests(unittest.TestCase):
             with self.assertRaises(PlanningError):
                 validate_plan_binding(plan, target, candidate, catalog_hash="b" * 64)
 
+    def test_apply_rejects_cross_platform_candidate(self):
+        candidate = {
+            "id": "therock:linux:stable:gfx1201",
+            "artifact_available": True,
+            "python_compatibility": "compatible",
+            "platform": "linux",
+            "gfx": "gfx1201",
+            "package_specs": ["torch==2.12.0"],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            target = self._target(Path(directory))
+            backup = BackupSnapshot(Path(directory) / "backup.json", Path(directory) / "requirements.txt", "", ())
+
+            with self.assertRaises(InstallationError):
+                apply_install(target, candidate, backup)
+
     def test_artifact_only_candidate_is_rejected(self):
         candidate = {
             "id": "therock:nightly:10.1.0:artifact-only",

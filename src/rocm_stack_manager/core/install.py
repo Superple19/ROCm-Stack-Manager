@@ -8,7 +8,7 @@ from urllib.parse import unquote, urlparse
 
 from .backup import BackupSnapshot, ExtensionBackupSnapshot
 from .inventory import collect_inventory
-from .planning import InstallPlan, PlanningError, build_plan_binding, validate_plan_binding
+from .planning import InstallPlan, PlanningError, build_plan_binding, host_platform, validate_plan_binding
 from .verify import _clean_environment
 
 
@@ -191,6 +191,11 @@ def apply_install(
 ):
     """Run the planned pip command after an explicit backup and approval."""
 
+    candidate_platform = candidate.get("platform")
+    if candidate_platform and candidate_platform != host_platform():
+        raise InstallationError(
+            f"cross-platform apply is not allowed: candidate={candidate_platform}, target={host_platform()}"
+        )
     if plan is None:
         plan = build_install_plan(
             target,

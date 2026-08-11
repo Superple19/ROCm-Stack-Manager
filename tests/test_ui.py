@@ -54,6 +54,18 @@ class UiTests(unittest.TestCase):
         self.assertFalse(any(button.text() == "Apply" for button in window.findChildren(QtWidgets.QPushButton)))
         window.close()
 
+    def test_failed_result_is_not_reported_as_complete(self):
+        window = MainWindow()
+        result = RuntimeObservation(
+            target_root=Path("target"),
+            python_executable=None,
+            host_platform="windows",
+            runtime_status="not_detected",
+            hardware_status="not_detected",
+        )
+        self.assertTrue(window._result_failed(result))
+        window.close()
+
     def test_candidate_selection_enables_plan_views_only(self):
         class FakeService:
             adapter_name = "comfyui"

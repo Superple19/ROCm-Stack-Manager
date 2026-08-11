@@ -225,8 +225,30 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _finish_task(self, task, label, callback, result):
         self._tasks.discard(task)
-        self.statusBar().showMessage(f"{label} complete")
+        self.statusBar().showMessage(f"{label} {'failed' if self._result_failed(result) else 'complete'}")
         callback(result)
+
+    @staticmethod
+    def _result_failed(result):
+        returncode = getattr(result, "returncode", None)
+        if returncode is not None and returncode != 0:
+            return True
+        runtime_status = getattr(result, "runtime_status", None)
+        hardware_status = getattr(result, "hardware_status", None)
+        tensor_status = getattr(result, "tensor_smoke_status", None)
+        if runtime_status is not None and (
+            runtime_status != "detected" or hardware_status != "detected" or tensor_status == "failed"
+        ):
+            return True
+        if isinstance(result, dict):
+            if result.get("verification_level") == "unknown":
+                return True
+            if any(
+                extension.get("status") in {"runtime_failed", "hardware_failed"}
+                for extension in result.get("extensions", ())
+            ):
+                return True
+        return False
 
     def _fail_task(self, task, label, error):
         self._tasks.discard(task)

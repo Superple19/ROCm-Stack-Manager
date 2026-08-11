@@ -305,7 +305,12 @@ def main(argv=None):
                 print(f"Tensor smoke: {values['tensor_smoke_status'] or 'not run'}")
                 if values.get("tensor_smoke_error"):
                     print(f"Tensor smoke error: {values['tensor_smoke_error']}")
-            return 0
+            failed = (
+                observation.runtime_status != "detected"
+                or observation.hardware_status != "detected"
+                or observation.tensor_smoke_status == "failed"
+            )
+            return 1 if failed else 0
 
         if args.command in {"restore", "rollback"}:
             backup = load_backup(args.backup)
@@ -443,7 +448,11 @@ def main(argv=None):
                     print(f"Verification: {evidence['verification_level']}")
                     for extension in evidence["extensions"]:
                         print(f"{extension['extension_id']} | {extension['status']}")
-                return 0
+                failed = evidence.get("verification_level") == "unknown" or any(
+                    extension.get("status") in {"runtime_failed", "hardware_failed"}
+                    for extension in evidence.get("extensions", ())
+                )
+                return 1 if failed else 0
             if args.action == "apply":
                 if not args.apply:
                     raise InstallationError("extensions apply requires --apply")
