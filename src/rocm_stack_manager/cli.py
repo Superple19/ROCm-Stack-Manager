@@ -292,8 +292,8 @@ def main(argv=None):
                     refresh=args.refresh_catalog,
                 )
                 catalog = load_catalog(catalog_path)
-            extension_profiles = catalog.get("_comfyui_extension_profiles", {})
-            extension_catalog = catalog.get("_extension_catalog", {})
+            extension_profiles = (catalog or {}).get("_comfyui_extension_profiles", {})
+            extension_catalog = (catalog or {}).get("_extension_catalog", {})
             if not isinstance(adapter, ExtensionProvider):
                 raise CapabilityUnavailable(
                     f"adapter does not provide ComfyUI extension operations: {adapter.id}"
