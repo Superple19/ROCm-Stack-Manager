@@ -251,6 +251,14 @@ def _summarize_values(values, limit=3):
     return f"{', '.join(values[:limit])} (+{len(values) - limit} more)"
 
 
+def _operation_exit_code(result):
+    """Return a failure code only after a mutating operation was attempted."""
+
+    if not getattr(result, "applied", False):
+        return 0
+    return 0 if result.returncode == 0 else 1
+
+
 def main(argv=None):
     args = parse_args(argv)
     try:
@@ -298,7 +306,7 @@ def main(argv=None):
                     print(f"Warning: {warning}")
                 if result.output:
                     print(result.output.rstrip())
-            return 0
+            return _operation_exit_code(result)
 
         if args.command == "extensions":
             if args.action == "restore":
@@ -319,7 +327,7 @@ def main(argv=None):
                         print(f"Warning: {warning}")
                     if getattr(result, "output", ""):
                         print(result.output.rstrip())
-                return 0
+                return _operation_exit_code(result)
 
             extension_profiles = {}
             catalog = None
@@ -442,7 +450,7 @@ def main(argv=None):
                     print(f"Return code: {result.returncode}")
                     if result.output:
                         print(result.output.rstrip())
-                return 0
+                return _operation_exit_code(result)
             if args.action == "plan":
                 if candidate is None:
                     raise CatalogError("extensions plan requires --catalog and --candidate")
@@ -563,7 +571,7 @@ def main(argv=None):
                     print(f"Warning: {warning}")
                 if result.output:
                     print(result.output.rstrip())
-            return 0
+            return _operation_exit_code(result)
         plan = adapter.plan(target, candidate)
         if args.json_output:
             print(json.dumps(plan.as_dict(), indent=2, sort_keys=True))

@@ -10,6 +10,15 @@ from rocm_stack_manager.core.verify import RuntimeObservation
 
 
 class CliTests(unittest.TestCase):
+    def test_operation_exit_code_reports_applied_failure(self):
+        failed = type("Result", (), {"applied": True, "returncode": 1})()
+        interrupted = type("Result", (), {"applied": True, "returncode": None})()
+        dry_run = type("Result", (), {"applied": False, "returncode": None})()
+
+        self.assertEqual(cli._operation_exit_code(failed), 1)
+        self.assertEqual(cli._operation_exit_code(interrupted), 1)
+        self.assertEqual(cli._operation_exit_code(dry_run), 0)
+
     def test_candidate_gfx_is_optional_for_target_probe(self):
         args = cli.parse_args(["candidates", "--target", "target"])
 
