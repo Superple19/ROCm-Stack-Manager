@@ -96,8 +96,9 @@ evidence remains explicitly marked as `unknown`.
 Candidate output distinguishes `installable` records, which have exact
 package specifications or direct wheel URLs, from `artifact_only` records,
 which preserve availability evidence but cannot produce an install command.
-Artifact-only records remain visible for provenance and are rejected by plan
-and install commands.
+The `candidates` command shows only `installable` records by default. Use
+`--candidate-kind artifact_only` or `--candidate-kind all` when reviewing
+provenance; artifact-only records remain rejected by plan and install commands.
 When the catalog is from ROCM Evidence Matrix, the adjacent
 `profiles/comfyui/profile.json` is loaded automatically. Candidate output then
 includes the profile status and warnings without promoting a candidate to

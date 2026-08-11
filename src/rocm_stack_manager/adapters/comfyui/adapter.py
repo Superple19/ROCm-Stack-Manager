@@ -3,11 +3,10 @@
 from ...core.adapter import CapabilityUnavailable
 from ...core.backup import create_extension_backup, load_extension_backup
 from ...core.inventory import collect_inventory
-from ...core.install import apply_extension_restore, build_extension_restore_plan
+from ...core.install import apply_extension_restore, build_extension_restore_plan, build_install_plan
 from ...core.hardware import probe_hardware
 from ...core.extension_verification import build_extension_verification
 from ...core.launch import LaunchOptions, LaunchPlan
-from ...core.planning import build_plan
 from ...core.verify import probe_target, target_python_tag
 from .detect import detect_comfyui
 from .extensions import (
@@ -35,7 +34,7 @@ class ComfyUIAdapter:
             raise CapabilityUnavailable(
                 "ComfyUI core plans do not accept extensions; use extensions plan"
             )
-        return build_plan(target, candidate)
+        return build_install_plan(target, candidate)
 
     def verify(self, target):
         return probe_target(target)

@@ -1,4 +1,5 @@
 import json
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -18,6 +19,8 @@ from rocm_stack_manager.core.planning import PlanningError, build_plan
 
 def _matrix():
     return {
+        "schema_version": 1,
+        "generated_at": "2026-08-08T00:00:00Z",
         "targets": [
             {
                 "gfx": "gfx1201",
@@ -29,6 +32,7 @@ def _matrix():
                                 "rocm_device_version": "7.14.0",
                                 "torch_device_version": "2.12.0+rocm7.14.0",
                                 "torchvision_device_version": "0.27.0+rocm7.14.0",
+                                "torchaudio_version": "2.12.0+rocm7.14.0",
                                 "source_id": "packages-stable",
                             },
                             "nightly": {
@@ -36,6 +40,7 @@ def _matrix():
                                 "rocm_device_version": None,
                                 "torch_device_version": None,
                                 "torchvision_device_version": None,
+                                "torchaudio_version": None,
                                 "source_id": "packages-nightly",
                             },
                         }
@@ -48,13 +53,14 @@ def _matrix():
 
 class CatalogTests(unittest.TestCase):
     def test_automatic_catalog_fetch_populates_cache(self):
+        matrix_bytes = json.dumps(_matrix()).encode("utf-8")
         document = {
-            "artifacts": [{"id": "compatibility_matrix", "path": "data/matrix.json"}],
             "schema_version": 1,
+            "artifacts": [{"id": "compatibility_matrix", "path": "data/matrix.json", "schema": "schemas/compatibility-matrix.schema.json", "schema_version": 1, "sha256": hashlib.sha256(matrix_bytes).hexdigest()}],
         }
         responses = {
             "https://matrix.test/data/catalog.json": json.dumps(document).encode("utf-8"),
-            "https://matrix.test/data/matrix.json": json.dumps(_matrix()).encode("utf-8"),
+            "https://matrix.test/data/matrix.json": matrix_bytes,
         }
 
         def download(url):
@@ -75,9 +81,32 @@ class CatalogTests(unittest.TestCase):
             self.assertEqual(path, cached_again)
             self.assertTrue(path.is_file())
             self.assertTrue((path.parent / "matrix.json").is_file())
-            self.assertTrue((path.parents[1] / "source-manifest.json").is_file())
+            self.assertTrue((Path(directory) / "cache" / "source-manifest.json").is_file())
+            self.assertTrue((Path(directory) / "cache" / "current.json").is_file())
             self.assertGreaterEqual(first_fetch_count, 2)
             self.assertEqual(fetch.call_count, first_fetch_count)
+
+    def test_corrupt_cached_artifact_is_replaced(self):
+        matrix_bytes = json.dumps(_matrix()).encode("utf-8")
+        document = {
+            "schema_version": 1,
+            "artifacts": [{"id": "compatibility_matrix", "path": "data/matrix.json", "schema": "schemas/compatibility-matrix.schema.json", "schema_version": 1, "sha256": hashlib.sha256(matrix_bytes).hexdigest()}],
+        }
+        responses = {
+            "https://matrix.test/data/catalog.json": json.dumps(document).encode("utf-8"),
+            "https://matrix.test/data/matrix.json": matrix_bytes,
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            cache_root = Path(directory) / "cache"
+            with patch("rocm_stack_manager.core.catalog._download_bytes", side_effect=lambda url: responses[url]):
+                path = ensure_catalog(None, cache_dir=cache_root, base_url="https://matrix.test")
+            (path.parent / "matrix.json").write_bytes(b"corrupt")
+            with patch("rocm_stack_manager.core.catalog._download_bytes", side_effect=lambda url: responses[url]) as fetch:
+                repaired = ensure_catalog(None, cache_dir=cache_root, base_url="https://matrix.test")
+
+            self.assertEqual((repaired.parent / "matrix.json").read_bytes(), matrix_bytes)
+            self.assertGreaterEqual(fetch.call_count, 2)
 
     def test_explicit_catalog_never_fetches(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -90,12 +119,14 @@ class CatalogTests(unittest.TestCase):
             fetch.assert_not_called()
 
     def test_default_source_is_used_when_base_url_is_none(self):
+        matrix_bytes = json.dumps(_matrix()).encode("utf-8")
         document = {
-            "artifacts": [{"id": "compatibility_matrix", "path": "data/matrix.json"}],
+            "schema_version": 1,
+            "artifacts": [{"id": "compatibility_matrix", "path": "data/matrix.json", "schema": "schemas/compatibility-matrix.schema.json", "schema_version": 1, "sha256": hashlib.sha256(matrix_bytes).hexdigest()}],
         }
         responses = {
             f"{DEFAULT_MATRIX_RAW_BASE_URL}/data/catalog.json": json.dumps(document).encode("utf-8"),
-            f"{DEFAULT_MATRIX_RAW_BASE_URL}/data/matrix.json": json.dumps(_matrix()).encode("utf-8"),
+            f"{DEFAULT_MATRIX_RAW_BASE_URL}/data/matrix.json": matrix_bytes,
         }
 
         def download(url):
@@ -120,13 +151,14 @@ class CatalogTests(unittest.TestCase):
                 )
 
     def test_environment_source_overrides_default(self):
-        document = {"artifacts": [], "schema_version": 1}
+        matrix_bytes = json.dumps(_matrix()).encode("utf-8")
+        document = {"artifacts": [{"id": "compatibility_matrix", "path": "data/matrix.json", "schema": "schemas/compatibility-matrix.schema.json", "schema_version": 1, "sha256": hashlib.sha256(matrix_bytes).hexdigest()}], "schema_version": 1}
         with tempfile.TemporaryDirectory() as directory, patch.dict(
             "os.environ", {MATRIX_CATALOG_URL_ENV: "https://mirror.test/matrix"}
         ):
             with patch(
                 "rocm_stack_manager.core.catalog._download_bytes",
-                return_value=json.dumps(document).encode("utf-8"),
+                side_effect=[json.dumps(document).encode("utf-8"), matrix_bytes],
             ) as fetch:
                 ensure_catalog(None, cache_dir=Path(directory) / "cache", base_url=None)
 
@@ -181,7 +213,7 @@ class CatalogTests(unittest.TestCase):
             matrix_path.write_text(json.dumps(_matrix()), encoding="utf-8")
             index_path = root / "catalog.json"
             index_path.write_text(
-                json.dumps({"artifacts": [{"id": "compatibility_matrix", "path": "matrix.json"}]}),
+                json.dumps({"schema_version": 1, "artifacts": [{"id": "compatibility_matrix", "path": "matrix.json", "schema": "schemas/compatibility-matrix.schema.json", "schema_version": 1, "sha256": hashlib.sha256(matrix_path.read_bytes()).hexdigest()}]}),
                 encoding="utf-8",
             )
 
@@ -204,9 +236,10 @@ class CatalogTests(unittest.TestCase):
             catalog_path.write_text(
                 json.dumps({
                     "artifacts": [
-                        {"id": "compatibility_matrix", "path": "data/matrix.json"},
-                        {"id": "extension_catalog", "path": "data/extensions.json"},
-                    ]
+                        {"id": "compatibility_matrix", "path": "data/matrix.json", "schema": "schemas/compatibility-matrix.schema.json", "schema_version": 1, "sha256": hashlib.sha256(matrix_path.read_bytes()).hexdigest()},
+                        {"id": "extension_catalog", "path": "data/extensions.json", "schema": "schemas/extension-catalog.schema.json", "schema_version": 1, "sha256": hashlib.sha256(extension_path.read_bytes()).hexdigest()},
+                    ],
+                    "schema_version": 1
                 }),
                 encoding="utf-8",
             )
@@ -222,6 +255,26 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(candidates[0]["channel"], "stable")
         self.assertTrue(candidates[0]["id"].startswith("therock:windows:stable:gfx1201:"))
         self.assertEqual(candidates[0]["candidate_kind"], "installable")
+
+    def test_candidate_identity_includes_torchvision(self):
+        first = iter_candidates(_matrix(), platform="windows", gfx="gfx1201")[0]
+        changed = _matrix()
+        changed["targets"][0]["platforms"]["windows"]["package_channels"]["stable"][
+            "torchvision_device_version"
+        ] = "0.28.0+rocm7.14.0"
+        second = iter_candidates(changed, platform="windows", gfx="gfx1201")[0]
+
+        self.assertNotEqual(first["id"], second["id"])
+        self.assertNotEqual(first["candidate_hash"], second["candidate_hash"])
+
+    def test_malformed_platform_record_is_rejected(self):
+        matrix = _matrix()
+        matrix["targets"][0]["platforms"]["windows"] = []
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix.json"
+            path.write_text(json.dumps(matrix), encoding="utf-8")
+            with self.assertRaises(CatalogError):
+                load_catalog(path)
 
     def test_historical_artifact_without_install_source_is_artifact_only(self):
         catalog = _matrix()

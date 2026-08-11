@@ -24,6 +24,7 @@ def candidate_hash(candidate):
         "rocm_version": candidate.get("rocm_version"),
         "torch_version": candidate.get("torch_version"),
         "torchvision_version": candidate.get("torchvision_version"),
+        "torchaudio_version": candidate.get("torchaudio_version"),
         "wheel_urls": sorted(candidate.get("wheel_urls") or ()),
     }
     return _digest(identity)

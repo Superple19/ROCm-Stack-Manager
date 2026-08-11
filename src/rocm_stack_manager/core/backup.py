@@ -1,6 +1,7 @@
 """Create target-local package backups before a mutating install."""
 
 import json
+import hashlib
 import os
 import re
 import subprocess
@@ -23,6 +24,7 @@ class BackupSnapshot:
     requirements: tuple[str, ...]
     target_root: str | None = None
     python_executable: str | None = None
+    requirements_sha256: str | None = None
 
     def as_dict(self):
         return {
@@ -32,6 +34,7 @@ class BackupSnapshot:
             "requirements": list(self.requirements),
             "target_root": self.target_root,
             "python_executable": self.python_executable,
+            "requirements_sha256": self.requirements_sha256,
         }
 
 
@@ -47,6 +50,7 @@ class ExtensionBackupSnapshot:
     candidate_id: str | None = None
     target_root: str | None = None
     python_executable: str | None = None
+    requirements_sha256: str | None = None
 
     def as_dict(self):
         return {
@@ -60,6 +64,7 @@ class ExtensionBackupSnapshot:
             "candidate_id": self.candidate_id,
             "target_root": self.target_root,
             "python_executable": self.python_executable,
+            "requirements_sha256": self.requirements_sha256,
         }
 
 
@@ -73,6 +78,24 @@ def _atomic_write_text(path, text):
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(text, encoding="utf-8")
     os.replace(temporary, path)
+
+
+def _requirements_text(requirements, trailing_newline=True):
+    text = "\n".join(requirements)
+    if trailing_newline and text:
+        text += "\n"
+    return text
+
+
+def _resolve_requirements_path(backup_path, value):
+    root = backup_path.parent.resolve()
+    candidate = Path(value) if value else backup_path.with_suffix(".txt")
+    candidate = (candidate if candidate.is_absolute() else root / candidate).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError as error:
+        raise BackupError("backup requirements path must stay beside the backup JSON") from error
+    return candidate
 
 
 def create_backup(target, destination=None, timeout=60):
@@ -103,7 +126,9 @@ def create_backup(target, destination=None, timeout=60):
     filename = "packages-" + created_at.replace(":", "").replace("-", "") + ".json"
     path = backup_dir / filename
     requirements_path = path.with_suffix(".txt")
-    _atomic_write_text(requirements_path, "\n".join(requirements) + "\n")
+    requirements_text = _requirements_text(requirements)
+    _atomic_write_text(requirements_path, requirements_text)
+    requirements_sha256 = hashlib.sha256(requirements_path.read_bytes()).hexdigest()
     _atomic_write(
         path,
         {
@@ -113,6 +138,7 @@ def create_backup(target, destination=None, timeout=60):
             "python_executable": str(target.python_executable),
             "requirements_path": requirements_path.name,
             "requirements": list(requirements),
+            "requirements_sha256": requirements_sha256,
         },
     )
     return BackupSnapshot(
@@ -122,6 +148,7 @@ def create_backup(target, destination=None, timeout=60):
         requirements=requirements,
         target_root=str(target.root),
         python_executable=str(target.python_executable),
+        requirements_sha256=requirements_sha256,
     )
 
 
@@ -175,7 +202,9 @@ def create_extension_backup(
     filename = "extensions-" + created_at.replace(":", "").replace("-", "") + ".json"
     path = backup_dir / filename
     requirements_path = path.with_suffix(".txt")
-    _atomic_write_text(requirements_path, "\n".join(requirements) + ("\n" if requirements else ""))
+    requirements_text = _requirements_text(requirements)
+    _atomic_write_text(requirements_path, requirements_text)
+    requirements_sha256 = hashlib.sha256(requirements_path.read_bytes()).hexdigest()
     document = {
         "kind": "extensions",
         "schema_version": 1,
@@ -186,6 +215,7 @@ def create_extension_backup(
         "requirements": list(requirements),
         "extension_ids": list(extension_ids),
         "candidate_id": candidate_id,
+        "requirements_sha256": requirements_sha256,
     }
     _atomic_write(path, document)
     return ExtensionBackupSnapshot(
@@ -197,6 +227,7 @@ def create_extension_backup(
         candidate_id=candidate_id,
         target_root=str(target.root),
         python_executable=str(target.python_executable),
+        requirements_sha256=requirements_sha256,
     )
 
 
@@ -209,20 +240,17 @@ def load_backup(path):
     except (OSError, json.JSONDecodeError) as error:
         raise BackupError(f"cannot read backup: {backup_path}") from error
     requirements = tuple(document.get("requirements") or ())
-    requirements_value = document.get("requirements_path")
-    if requirements_value:
-        requirements_path = Path(requirements_value)
-        if not requirements_path.is_absolute():
-            requirements_path = backup_path.parent / requirements_path
-    else:
-        requirements_path = backup_path.with_suffix(".txt")
+    requirements_path = _resolve_requirements_path(backup_path, document.get("requirements_path"))
     if not requirements:
         raise BackupError(f"backup contains no requirements: {backup_path}")
     if not requirements_path.is_file():
         sibling_path = backup_path.with_suffix(".txt")
         if requirements_path != sibling_path:
             requirements_path = sibling_path
-        _atomic_write_text(requirements_path, "\n".join(requirements) + "\n")
+        _atomic_write_text(requirements_path, _requirements_text(requirements))
+    expected_hash = document.get("requirements_sha256")
+    if expected_hash and hashlib.sha256(requirements_path.read_bytes()).hexdigest() != expected_hash:
+        raise BackupError(f"backup requirements hash mismatch: {requirements_path}")
     return BackupSnapshot(
         path=backup_path,
         requirements_path=requirements_path,
@@ -230,6 +258,7 @@ def load_backup(path):
         requirements=requirements,
         target_root=document.get("target_root"),
         python_executable=document.get("python_executable"),
+        requirements_sha256=expected_hash,
     )
 
 
@@ -244,12 +273,12 @@ def load_extension_backup(path):
     if document.get("kind") != "extensions":
         raise BackupError(f"backup is not an extension backup: {backup_path}")
     requirements = tuple(document.get("requirements") or ())
-    requirements_value = document.get("requirements_path")
-    requirements_path = Path(requirements_value) if requirements_value else backup_path.with_suffix(".txt")
-    if not requirements_path.is_absolute():
-        requirements_path = backup_path.parent / requirements_path
+    requirements_path = _resolve_requirements_path(backup_path, document.get("requirements_path"))
     if not requirements_path.is_file():
-        _atomic_write_text(requirements_path, "\n".join(requirements) + ("\n" if requirements else ""))
+        _atomic_write_text(requirements_path, _requirements_text(requirements))
+    expected_hash = document.get("requirements_sha256")
+    if expected_hash and hashlib.sha256(requirements_path.read_bytes()).hexdigest() != expected_hash:
+        raise BackupError(f"extension backup requirements hash mismatch: {requirements_path}")
     return ExtensionBackupSnapshot(
         path=backup_path,
         requirements_path=requirements_path,
@@ -259,4 +288,5 @@ def load_extension_backup(path):
         candidate_id=document.get("candidate_id"),
         target_root=document.get("target_root"),
         python_executable=document.get("python_executable"),
+        requirements_sha256=expected_hash,
     )

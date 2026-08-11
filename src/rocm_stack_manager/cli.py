@@ -92,6 +92,12 @@ def parse_args(argv=None):
     _add_catalog_options(candidates)
     _add_adapter_option(candidates)
     candidates.add_argument("--json", action="store_true", dest="json_output")
+    candidates.add_argument(
+        "--candidate-kind",
+        choices=("installable", "artifact_only", "unavailable", "all"),
+        default="installable",
+        help="Show only this record kind (default: installable; use all for provenance records)",
+    )
     candidates.add_argument("--include-unavailable", action="store_true")
     candidates.add_argument("--include-incompatible", action="store_true")
 
@@ -195,6 +201,7 @@ def _print_candidates(candidates, json_output):
             print(
                 f"{candidate['id']} | {candidate['rocm_version'] or 'unknown'} | "
                 f"Torch {candidate['torch_version'] or 'unknown'} | "
+                f"TorchAudio {candidate.get('torchaudio_version') or 'unknown'} | "
                 f"Python {candidate['python_compatibility']} | "
                 f"{candidate['distribution_family']} | {candidate['status']}{resolver_text}"
             )
@@ -553,6 +560,7 @@ def main(argv=None):
                 python_tag=python_tag,
                 include_unavailable=args.include_unavailable,
                 include_incompatible=args.include_incompatible,
+                candidate_kind=None if args.candidate_kind == "all" else args.candidate_kind,
             )
             _print_candidates(candidates, args.json_output)
             return 0

@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import hashlib
 import os
 import tempfile
 import unittest
@@ -129,13 +130,17 @@ class UiTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             matrix = {
+                "schema_version": 1,
+                "generated_at": "2026-08-11T00:00:00Z",
                 "targets": [],
             }
-            (root / "matrix.json").write_text(json.dumps(matrix), encoding="utf-8")
+            matrix_path = root / "matrix.json"
+            matrix_path.write_text(json.dumps(matrix), encoding="utf-8")
             catalog = root / "catalog.json"
             catalog.write_text(
                 json.dumps({
-                    "artifacts": [{"id": "compatibility_matrix", "path": "matrix.json"}],
+                    "schema_version": 1,
+                    "artifacts": [{"id": "compatibility_matrix", "path": "matrix.json", "schema": "schemas/compatibility-matrix.schema.json", "schema_version": 1, "sha256": hashlib.sha256(matrix_path.read_bytes()).hexdigest()}],
                 }),
                 encoding="utf-8",
             )

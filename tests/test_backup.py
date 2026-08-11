@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from rocm_stack_manager.core.backup import (
+    BackupError,
     BackupSnapshot,
     ExtensionBackupSnapshot,
     create_backup,
@@ -152,6 +153,34 @@ class BackupAndApplyTests(unittest.TestCase):
             backup = load_backup(backup_path)
 
             self.assertEqual(backup.requirements_path, root / "recorded.txt")
+
+    def test_load_backup_rejects_external_requirements_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            backup_path = root / "backup.json"
+            backup_path.write_text(
+                json.dumps({"requirements": ["torch==2.12.0"], "requirements_path": "../outside.txt"}),
+                encoding="utf-8",
+            )
+            with self.assertRaises(BackupError):
+                load_backup(backup_path)
+
+    def test_load_backup_rejects_modified_hashed_requirements(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            requirements_path = root / "backup.txt"
+            requirements_path.write_text("torch==2.12.0\n", encoding="utf-8")
+            backup_path = root / "backup.json"
+            backup_path.write_text(
+                json.dumps({
+                    "requirements": ["torch==2.12.0"],
+                    "requirements_path": requirements_path.name,
+                    "requirements_sha256": "0" * 64,
+                }),
+                encoding="utf-8",
+            )
+            with self.assertRaises(BackupError):
+                load_backup(backup_path)
 
     def test_apply_restore_uses_target_python(self):
         completed = type("Completed", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
