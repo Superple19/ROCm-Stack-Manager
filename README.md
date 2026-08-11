@@ -169,7 +169,9 @@ Plans warn when the selected package set does not include `torchaudio`; this is
 safe for image-only ComfyUI use but may affect audio workflows.
 The `restore` command (also available as `rollback`) accepts a backup JSON path
 and is dry-run by default. It reinstalls recorded versions with
-`--force-reinstall`; it does not remove extra packages.
+`--force-reinstall`; it does not remove extra packages. The backup protects
+the requirements file and its hash, but does not archive wheel bytes, so
+restore is version-pinned rather than byte-exact.
 The `verify` command executes only the selected target's Python interpreter. It
 does not call a globally installed ROCm executable; host GPU state is reported
 separately from target-local Torch, HIP, and ROCm package metadata.

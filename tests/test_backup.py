@@ -101,6 +101,7 @@ class BackupAndApplyTests(unittest.TestCase):
 
             self.assertIn("--force-reinstall", plan.command)
             self.assertIn(str(requirements), plan.command)
+            self.assertTrue(any("artifact bytes" in warning for warning in plan.warnings))
 
     def test_restore_rejects_backup_from_another_target(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -252,7 +252,10 @@ def build_restore_plan(target, backup):
         target_root=target.root,
         candidate={"id": f"backup:{backup.path.name}"},
         command=command,
-        warnings=("restore reinstalls recorded versions but does not prune extra packages",),
+        warnings=(
+            "restore reinstalls recorded versions but does not prune extra packages",
+            "restore is version-pinned; package artifact bytes are not archived",
+        ),
     )
 
 
@@ -271,7 +274,10 @@ def build_extension_restore_plan(target, backup: ExtensionBackupSnapshot):
             target_root=target.root,
             candidate={"id": f"backup:{backup.path.name}"},
             command=(),
-            warnings=("no extension packages were recorded; nothing to restore",),
+            warnings=(
+                "no extension packages were recorded; nothing to restore",
+                "restore is version-pinned; package artifact bytes are not archived",
+            ),
         )
     if not backup.requirements_path.is_file():
         raise InstallationError(f"extension backup requirements file is missing: {backup.requirements_path}")
@@ -288,7 +294,10 @@ def build_extension_restore_plan(target, backup: ExtensionBackupSnapshot):
             "--requirement",
             str(backup.requirements_path),
         ),
-        warnings=("restore reinstalls recorded extensions but does not prune extra packages",),
+        warnings=(
+            "restore reinstalls recorded extensions but does not prune extra packages",
+            "restore is version-pinned; package artifact bytes are not archived",
+        ),
     )
 
 
