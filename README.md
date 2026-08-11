@@ -1,10 +1,23 @@
 # ROCm Stack Manager
 
-An unofficial ROCm environment manager for ComfyUI installations and other
-ROCm application runtimes.
+An unofficial ROCm environment manager for ComfyUI installations. Other ROCm
+application adapters are reserved scaffolds and are not functional targets.
 
 The manager never assumes a machine-specific installation path. A target is
 provided explicitly or resolved relative to the current working directory.
+
+## Privacy and evidence boundary
+
+All target detection, package inventory, resolver preflight, runtime probes,
+and tensor checks run locally on the selected machine. The manager has no
+telemetry, background reporting, crash upload, or automatic evidence upload.
+Network access is limited to an explicitly invoked catalog refresh and the
+package commands the user requests, such as a resolver dry-run or install.
+
+`verify` and `extensions verify` write evidence only to the user-selected
+local output path. They never transmit that file. The manager does not operate
+a community intake or maintainer review workflow. No local path, token,
+hostname, driver detail, GPU result, or environment value is sent automatically.
 
 ## Install from a clone
 

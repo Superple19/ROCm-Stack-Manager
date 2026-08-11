@@ -100,7 +100,9 @@ and emits an install command only when exact source, ABI, platform, GFX, and
 Matrix evidence agree.
 `resolve` is a targeted `pip --dry-run`; it never installs or promotes an
 extension. `verify` runs selected imports and a small tensor smoke test and
-exports evidence for human review.
+exports evidence to a local file for the user's inspection. No command in this
+working snapshot uploads verification data or sends telemetry, and the manager
+does not operate a community intake or maintainer review workflow.
 
 An extension with no exact source or evidence remains `blocked` or
 `unverified`. It is never treated as generally compatible. An experimental

@@ -26,7 +26,8 @@ AI Toolkit adapters without adding their fields to the shared core model.
 
 ## Non-goals
 
-- No automatic background refresh, telemetry, update check, or upload.
+- No automatic background refresh, telemetry, update check, upload, community
+  intake, or maintainer review workflow. Evidence export is local-only.
 - No exhaustive resolver or GPU testing from the UI.
 - No automatic selection of a candidate, extension, source, GFX, or platform.
 - No copied third-party installer scripts or patched wheels.

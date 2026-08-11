@@ -15,10 +15,10 @@ ROCm Evidence Matrix catalog
    runtime   native  adapters
 ```
 
-The Matrix owns compatibility facts and evidence. This repository owns target
-detection, installation planning, backups, verification, and application
-launching. Adapters remain separate because ComfyUI uses a Python environment
-while Ollama uses a native runtime.
+The Matrix owns compatibility facts and evidence. This repository owns ComfyUI
+target detection, installation planning, backups, and local verification.
+Application launch is a reserved adapter capability; the current ComfyUI launch
+planner and Ollama runtime adapter are not implemented.
 
 Hardware detection is shared and returns a `HardwareObservation` containing
 GPU, GFX, driver, tool, scope, and provenance fields. The UI may collect a
@@ -26,6 +26,9 @@ host-scoped probe at startup as a provisional hint. After a target is selected,
 an adapter runtime probe is preferred when it reports devices; `hipInfo` or
 `rocminfo` is then used as a target-local fallback. Target evidence replaces
 the host hint, and a GPU model name never infers a GFX target.
+All probes and inventories stay on the user's machine. Verification export is
+a local file operation; this repository has no telemetry, upload, community
+intake, or maintainer review path.
 
 ComfyUI extension evidence follows a separate path:
 

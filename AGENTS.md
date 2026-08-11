@@ -43,6 +43,12 @@
 - Do not execute downloaded code during catalog discovery.
 - Keep local inventories, backups, logs, caches, and virtual environments out of Git.
 
+## Windows subprocess encoding
+
+- When running Python subprocesses on Windows, force UTF-8 output with `python -X utf8` or `PYTHONIOENCODING=utf-8`.
+- Do not infer file corruption from mojibake in external-process output or from the display column of `Format-Hex`.
+- Validate file bytes and decoding separately with an explicit UTF-8 reader before changing a file.
+
 ## Architecture
 
 - `core/` owns target detection, catalog selection, planning, install, backup, restore, verification, and launch contracts.
