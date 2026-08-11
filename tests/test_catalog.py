@@ -322,6 +322,10 @@ class CatalogTests(unittest.TestCase):
             with self.assertRaises(CatalogError):
                 load_catalog(path)
 
+    def test_unsupported_candidate_platform_is_rejected(self):
+        with self.assertRaisesRegex(CatalogError, "unsupported candidate platform"):
+            iter_candidates(_matrix(), platform="darwin", gfx="gfx1201")
+
     def test_historical_artifact_without_install_source_is_artifact_only(self):
         catalog = _matrix()
         catalog["_historical_candidates"] = [

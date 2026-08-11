@@ -14,6 +14,7 @@ from urllib.parse import unquote
 
 from .profile import ProfileError, evaluate_candidate, load_profile
 from .identity import candidate_hash
+from .platforms import SUPPORTED_PLATFORMS
 
 
 class CatalogError(ValueError):
@@ -421,6 +422,8 @@ def _candidate_id(platform, channel, gfx, rocm_version, torch_version, torchvisi
 
 
 def _python_compatibility(catalog, platform, channel, gfx, python_tag, expected_versions):
+    if platform not in SUPPORTED_PLATFORMS:
+        return "unknown"
     if not python_tag:
         return "unknown"
     source_id = f"packages-{channel}" + ("-linux" if platform == "linux" else "")
@@ -614,6 +617,11 @@ def iter_candidates(
     only reports artifact evidence; it never promotes a candidate to runtime or
     hardware compatibility.
     """
+
+    if platform not in SUPPORTED_PLATFORMS:
+        raise CatalogError(
+            f"unsupported candidate platform: {platform}; choose windows or linux"
+        )
 
     candidates = []
 

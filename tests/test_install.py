@@ -9,6 +9,7 @@ from rocm_stack_manager.core.detection import detect_target
 from rocm_stack_manager.core.backup import BackupSnapshot
 from rocm_stack_manager.core.install import InstallationError, apply_install, build_install_plan, dry_run_install
 from rocm_stack_manager.core.planning import PlanningError, validate_plan_binding
+from rocm_stack_manager.core.platforms import UnsupportedPlatformError
 
 
 class InstallPlanTests(unittest.TestCase):
@@ -201,6 +202,25 @@ class InstallPlanTests(unittest.TestCase):
 
             with self.assertRaises(InstallationError):
                 apply_install(target, candidate, backup)
+
+    def test_apply_rejects_unsupported_host_platform(self):
+        candidate = {
+            "id": "therock:windows:stable:gfx1201",
+            "artifact_available": True,
+            "python_compatibility": "compatible",
+            "platform": "windows",
+            "gfx": "gfx1201",
+            "package_specs": ["torch==2.12.0"],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            target = self._target(Path(directory))
+            backup = BackupSnapshot(Path(directory) / "backup.json", Path(directory) / "requirements.txt", "", ())
+            with patch(
+                "rocm_stack_manager.core.install.require_supported_host_platform",
+                side_effect=UnsupportedPlatformError("unsupported host platform"),
+            ):
+                with self.assertRaisesRegex(InstallationError, "unsupported host platform"):
+                    apply_install(target, candidate, backup)
 
     def test_resolver_failure_blocks_cleanup_and_install(self):
         candidate = {

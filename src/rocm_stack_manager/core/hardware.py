@@ -1,11 +1,12 @@
 """Application-independent GPU, GFX, and ROCm tool detection."""
 
 from dataclasses import dataclass
-import os
 from pathlib import Path
 import re
 import shutil
 import subprocess
+
+from .platforms import host_platform as _host_platform
 
 
 _GFX_RE = re.compile(r"(?i)\b(gfx[0-9a-f]+)\b")
@@ -43,10 +44,6 @@ class HardwareObservation:
             "target_root": str(self.target_root) if self.target_root else None,
             "error": self.error,
         }
-
-
-def _host_platform():
-    return "windows" if os.name == "nt" else "linux"
 
 
 def normalize_gfx(value):

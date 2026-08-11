@@ -3,7 +3,6 @@
 import argparse
 import hashlib
 import json
-import os
 import subprocess
 import sys
 from dataclasses import replace
@@ -34,10 +33,11 @@ from .core.install import (
 from .core.extension_resolver import run_extension_resolver
 from .core.resolver import run_resolver
 from .core.planning import PlanningError
+from .core.platforms import SUPPORTED_PLATFORMS, UNSUPPORTED_PLATFORM, host_platform
 
 
 def _host_platform():
-    return "windows" if os.name == "nt" else "linux"
+    return host_platform()
 
 
 def _add_catalog_options(parser):
@@ -53,7 +53,12 @@ def _add_catalog_options(parser):
         help="Refresh the cached Matrix catalog before use",
     )
     parser.add_argument("--target", type=Path, required=True, help="Portable root or ComfyUI directory")
-    parser.add_argument("--platform", choices=("windows", "linux"), default=_host_platform())
+    detected_platform = _host_platform()
+    parser.add_argument(
+        "--platform",
+        choices=SUPPORTED_PLATFORMS,
+        default=None if detected_platform == UNSUPPORTED_PLATFORM else detected_platform,
+    )
     parser.add_argument(
         "--gfx",
         help="GFX target, for example gfx1201; infer a single target-local GFX when omitted",
@@ -338,6 +343,13 @@ def main(argv=None):
             )
             return 1 if failed else 0
 
+        candidate_commands = {"candidates", "plan", "inventory", "install", "resolve"}
+        if args.command in candidate_commands and args.platform is None:
+            raise CapabilityUnavailable(
+                "unsupported host platform; Manager supports Windows and Linux only; "
+                "pass --platform windows or --platform linux for read-only catalog inspection"
+            )
+
         if args.command in {"restore", "rollback"}:
             backup = load_backup(args.backup, materialize=args.apply)
             if args.apply:
@@ -403,6 +415,10 @@ def main(argv=None):
             if args.candidate:
                 if catalog is None:
                     raise CatalogError("--candidate requires a Matrix catalog")
+                if _host_platform() not in SUPPORTED_PLATFORMS:
+                    raise CapabilityUnavailable(
+                        "unsupported host platform; extension candidate operations support Windows and Linux only"
+                    )
                 python_tag = (
                     adapter.python_tag(target)
                     if isinstance(adapter, PythonPackageAdapter)

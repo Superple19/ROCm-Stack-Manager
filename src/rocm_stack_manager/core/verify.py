@@ -6,6 +6,8 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from .platforms import host_platform as _host_platform
+
 
 _PROBE_SCRIPT = r'''
 import json
@@ -117,10 +119,6 @@ class RuntimeObservation:
             "tensor_smoke_error": self.tensor_smoke_error,
             "error": self.error,
         }
-
-
-def _host_platform():
-    return "windows" if os.name == "nt" else "linux"
 
 
 def _clean_environment(target):

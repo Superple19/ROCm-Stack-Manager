@@ -8,7 +8,8 @@ from urllib.parse import unquote, urlparse
 
 from .backup import BackupError, BackupSnapshot, ExtensionBackupSnapshot, attach_wheelhouse, create_backup
 from .inventory import collect_inventory
-from .planning import InstallPlan, PlanningError, build_plan_binding, host_platform, validate_plan_binding
+from .planning import InstallPlan, PlanningError, build_plan_binding, validate_plan_binding
+from .platforms import UnsupportedPlatformError, require_supported_host_platform
 from .staging import StagingError, stage_candidate, validate_staged_candidate
 from .verify import _clean_environment
 
@@ -201,10 +202,14 @@ def apply_install(
 ):
     """Run the planned pip command after an explicit backup and approval."""
 
+    try:
+        current_platform = require_supported_host_platform()
+    except UnsupportedPlatformError as error:
+        raise InstallationError(str(error)) from error
     candidate_platform = candidate.get("platform")
-    if candidate_platform and candidate_platform != host_platform():
+    if candidate_platform and candidate_platform != current_platform:
         raise InstallationError(
-            f"cross-platform apply is not allowed: candidate={candidate_platform}, target={host_platform()}"
+            f"cross-platform apply is not allowed: candidate={candidate_platform}, target={current_platform}"
         )
     if plan is None:
         plan = build_install_plan(
@@ -431,6 +436,10 @@ def build_extension_restore_plan(target, backup: ExtensionBackupSnapshot):
 def apply_restore(target, backup, timeout=3600):
     """Run a restore command after explicit user approval."""
 
+    try:
+        require_supported_host_platform()
+    except UnsupportedPlatformError as error:
+        raise InstallationError(str(error)) from error
     plan = build_restore_plan(target, backup)
     try:
         completed = subprocess.run(
@@ -456,6 +465,10 @@ def apply_restore(target, backup, timeout=3600):
 def apply_extension_restore(target, backup: ExtensionBackupSnapshot, timeout=3600):
     """Apply an extension-only restore after explicit approval."""
 
+    try:
+        require_supported_host_platform()
+    except UnsupportedPlatformError as error:
+        raise InstallationError(str(error)) from error
     plan = build_extension_restore_plan(target, backup)
     if not plan.command:
         return InstallResult(

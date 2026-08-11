@@ -43,6 +43,17 @@ class CliTests(unittest.TestCase):
 
         self.assertIsNone(args.gfx)
 
+    def test_unsupported_host_does_not_default_to_linux(self):
+        with patch("rocm_stack_manager.cli._host_platform", return_value="unsupported_platform"):
+            args = cli.parse_args(["candidates", "--target", "target"])
+        self.assertIsNone(args.platform)
+
+        with patch("rocm_stack_manager.cli._host_platform", return_value="unsupported_platform"):
+            args = cli.parse_args(
+                ["candidates", "--target", "target", "--platform", "windows"]
+            )
+        self.assertEqual(args.platform, "windows")
+
     def test_candidates_infer_single_target_gfx(self):
         class FakeAdapter:
             id = "fake"

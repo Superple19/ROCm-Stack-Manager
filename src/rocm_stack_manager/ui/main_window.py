@@ -1,12 +1,12 @@
 """QtWidgets main window for read-only ROCm candidate and plan inspection."""
 
 import json
-import os
 from pathlib import Path
 
 from PySide6 import QtCore, QtWidgets
 
 from ..adapters.registry import available_adapters
+from ..core.platforms import SUPPORTED_PLATFORMS, host_platform
 from .models import CandidateTableModel
 from .services import ManagerService, detected_gfx_targets
 from .workers import Task
@@ -84,7 +84,15 @@ class MainWindow(QtWidgets.QMainWindow):
         filter_layout = QtWidgets.QGridLayout(filters)
         self.platform_combo = QtWidgets.QComboBox()
         self.platform_combo.addItems(("windows", "linux"))
-        self.platform_combo.setCurrentText("windows" if os.name == "nt" else "linux")
+        detected_platform = host_platform()
+        if detected_platform in SUPPORTED_PLATFORMS:
+            self.platform_combo.setCurrentText(detected_platform)
+        else:
+            self.platform_combo.setCurrentIndex(-1)
+            self.platform_combo.setPlaceholderText(
+                f"Unsupported host platform: {detected_platform}"
+            )
+            self.platform_combo.setEnabled(False)
         self.gfx_edit = QtWidgets.QComboBox()
         self.gfx_edit.setEditable(True)
         self._set_gfx_placeholder("Detected GFX or enter manually")
@@ -402,6 +410,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _find_candidates(self):
         self._bump_generation()
+        platform = self.platform_combo.currentText()
+        if platform not in SUPPORTED_PLATFORMS:
+            self._show_error(
+                "unsupported host platform; ROCm Stack Manager supports Windows and Linux only"
+            )
+            return
         if self.service.catalog is None:
             self._show_error("CatalogError: load a Matrix catalog first")
             return
@@ -421,7 +435,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._run(
             "Find candidates",
             lambda: self.service.candidates(
-                platform=self.platform_combo.currentText(),
+                platform=platform,
                 gfx=gfx,
                 channel=channel,
                 rocm_version=rocm_version,

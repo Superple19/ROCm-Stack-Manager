@@ -1,18 +1,10 @@
 """Build non-mutating installation plans from catalog candidates."""
 
 from dataclasses import dataclass, field
-import sys
 from pathlib import Path
 
 from .identity import candidate_hash
-
-
-def host_platform():
-    if sys.platform.startswith("win"):
-        return "windows"
-    if sys.platform.startswith("linux"):
-        return "linux"
-    return sys.platform
+from .platforms import host_platform
 
 
 def build_plan_binding(
