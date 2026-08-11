@@ -244,6 +244,34 @@ class CatalogTests(unittest.TestCase):
 
             self.assertEqual(loaded["targets"][0]["gfx"], "gfx1201")
 
+    def test_accepts_catalog_artifacts_from_windows_crlf_checkout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "data").mkdir()
+            matrix_text = json.dumps(_matrix(), indent=2) + "\n"
+            matrix_bytes = matrix_text.replace("\n", "\r\n").encode("utf-8")
+            matrix_path = root / "data" / "matrix.json"
+            matrix_path.write_bytes(matrix_bytes)
+            canonical_hash = hashlib.sha256(matrix_bytes.replace(b"\r\n", b"\n")).hexdigest()
+            catalog_path = root / "data" / "catalog.json"
+            catalog_path.write_text(
+                json.dumps({
+                    "schema_version": 1,
+                    "artifacts": [{
+                        "id": "compatibility_matrix",
+                        "path": "data/matrix.json",
+                        "schema": "schemas/compatibility-matrix.schema.json",
+                        "schema_version": 1,
+                        "sha256": canonical_hash,
+                    }],
+                }),
+                encoding="utf-8",
+            )
+
+            loaded = load_catalog(catalog_path)
+
+            self.assertEqual(loaded["targets"][0]["gfx"], "gfx1201")
+
     def test_loads_extension_artifact_catalog(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

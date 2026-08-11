@@ -17,6 +17,7 @@ if PY_SIDE_AVAILABLE:
     from rocm_stack_manager.core.verify import RuntimeObservation
     from rocm_stack_manager.ui.main_window import MainWindow
     from rocm_stack_manager.ui.services import ManagerService, detected_gfx_targets
+    from rocm_stack_manager.ui.workers import Task
 
 
 @unittest.skipUnless(PY_SIDE_AVAILABLE, "PySide6 optional dependency is not installed")
@@ -73,6 +74,10 @@ class UiTests(unittest.TestCase):
         self.assertTrue(window._result_failed(failed))
         self.assertFalse(window._result_failed(dry_run))
         window.close()
+
+    def test_worker_is_not_deleted_before_completion_signal(self):
+        task = Task(lambda: None)
+        self.assertFalse(task.autoDelete())
 
     def test_stale_async_result_is_discarded_after_generation_changes(self):
         window = MainWindow()

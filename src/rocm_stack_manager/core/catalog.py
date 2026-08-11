@@ -32,6 +32,12 @@ MATRIX_CATALOG_URL_ENV = "ROCM_MATRIX_CATALOG_URL"
 _SHA256_LENGTH = 64
 
 
+def _canonical_artifact_bytes(path):
+    """Match Matrix catalog hashes across Windows and Unix checkout endings."""
+
+    return path.read_bytes().replace(b"\r\n", b"\n")
+
+
 def _is_sha256(value):
     return (
         isinstance(value, str)
@@ -135,7 +141,7 @@ def _validate_cached_bundle(catalog_path):
             raise CatalogError(f"Matrix artifact escapes cache root: {artifact['path']}") from error
         if not artifact_path.is_file():
             raise CatalogError(f"Matrix artifact is missing: {artifact['path']}")
-        digest = hashlib.sha256(artifact_path.read_bytes()).hexdigest()
+        digest = hashlib.sha256(_canonical_artifact_bytes(artifact_path)).hexdigest()
         if digest != artifact["sha256"]:
             raise CatalogError(f"Matrix artifact hash mismatch: {artifact['id']}")
         artifact_document = _read_json(artifact_path)
