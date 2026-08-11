@@ -421,40 +421,29 @@ def _candidate_id(platform, channel, gfx, rocm_version, torch_version, torchvisi
     return "therock:" + ":".join(str(value).replace(":", "_") for value in values)
 
 
-def _python_compatibility(catalog, platform, channel, gfx, python_tag):
+def _python_compatibility(catalog, platform, channel, gfx, python_tag, expected_versions):
     if not python_tag:
         return "unknown"
     source_id = f"packages-{channel}" + ("-linux" if platform == "linux" else "")
     snapshot = catalog.get("_package_snapshots", {}).get(f"package_snapshots:{source_id.removeprefix('packages-')}")
     if not snapshot:
         return "unknown"
-    package_names = (
-        "torch",
-        "torchvision",
-        "torchaudio",
-        f"amd-torch-device-{gfx}",
-        f"amd-torchvision-device-{gfx}",
-        f"rocm-sdk-device-{gfx}",
-    )
-    package_results = []
+    if not expected_versions or any(not version for version in expected_versions.values()):
+        return "incompatible"
     platform_tag = "win_amd64" if platform == "windows" else "linux_x86_64"
-    for package_name in package_names:
+    for package_name, expected_version in expected_versions.items():
         artifacts = snapshot.get("packages", {}).get(package_name)
-        if artifacts is None:
-            continue
-        if not artifacts:
-            package_results.append(False)
-            continue
-        package_results.append(
-            any(
-                item.get("python_tag") in {python_tag, "py3", "source"}
-                and item.get("platform_tag") in {platform_tag, "any", "source"}
-                for item in artifacts
-            )
-        )
-    if not package_results:
-        return "unknown"
-    return "compatible" if all(package_results) else "incompatible"
+        if not isinstance(artifacts, list) or not artifacts:
+            return "incompatible"
+        if not any(
+            isinstance(item, dict)
+            and item.get("version") == expected_version
+            and item.get("python_tag") in {python_tag, "py3", "source"}
+            and item.get("platform_tag") in {platform_tag, "any", "source"}
+            for item in artifacts
+        ):
+            return "incompatible"
+    return "compatible"
 
 
 def _candidate_from_channel(target, platform, channel, details, catalog, python_tag):
@@ -482,6 +471,17 @@ def _candidate_from_channel(target, platform, channel, details, catalog, python_
                 f"amd-torchvision-device-{target['gfx']}=={torchvision_version}",
             )
         )
+    expected_versions = {
+        "rocm": rocm_version,
+        "rocm-sdk-core": rocm_version,
+        "rocm-sdk-libraries": rocm_version,
+        f"rocm-sdk-device-{target['gfx']}": rocm_version,
+        "torch": torch_version,
+        f"amd-torch-device-{target['gfx']}": torch_version,
+        "torchvision": torchvision_version,
+        f"amd-torchvision-device-{target['gfx']}": torchvision_version,
+        "torchaudio": torchaudio_version,
+    }
     candidate = {
         "id": _candidate_id(
             platform,
@@ -514,7 +514,9 @@ def _candidate_from_channel(target, platform, channel, details, catalog, python_
         "status": "artifact_available" if available else "artifact_unavailable",
         "lifecycle": "current",
         "python_tag": python_tag,
-        "python_compatibility": _python_compatibility(catalog, platform, channel, target["gfx"], python_tag),
+        "python_compatibility": _python_compatibility(
+            catalog, platform, channel, target["gfx"], python_tag, expected_versions
+        ),
     }
     profile_status, profile_warnings, profile_id = evaluate_candidate(
         candidate, catalog.get("_comfyui_profile")

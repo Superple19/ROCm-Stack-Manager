@@ -18,7 +18,7 @@ from rocm_stack_manager.core.planning import PlanningError, build_plan
 
 
 def _matrix():
-    return {
+    matrix = {
         "schema_version": 1,
         "generated_at": "2026-08-08T00:00:00Z",
         "targets": [
@@ -49,6 +49,26 @@ def _matrix():
             }
         ]
     }
+    versions = {
+        "rocm": "7.14.0",
+        "rocm-sdk-core": "7.14.0",
+        "rocm-sdk-libraries": "7.14.0",
+        "rocm-sdk-device-gfx1201": "7.14.0",
+        "torch": "2.12.0+rocm7.14.0",
+        "amd-torch-device-gfx1201": "2.12.0+rocm7.14.0",
+        "torchvision": "0.27.0+rocm7.14.0",
+        "amd-torchvision-device-gfx1201": "0.27.0+rocm7.14.0",
+        "torchaudio": "2.12.0+rocm7.14.0",
+    }
+    matrix["_package_snapshots"] = {
+        "package_snapshots:stable": {
+            "packages": {
+                name: [{"version": version, "python_tag": "cp312", "platform_tag": "win_amd64"}]
+                for name, version in versions.items()
+            }
+        }
+    }
+    return matrix
 
 
 class CatalogTests(unittest.TestCase):
@@ -421,23 +441,6 @@ class CatalogTests(unittest.TestCase):
 
     def test_filters_candidates_by_target_python_tag(self):
         catalog = _matrix()
-        catalog["_package_snapshots"] = {
-            "package_snapshots:stable": {
-                "packages": {
-                    name: [
-                        {"python_tag": "cp312", "platform_tag": "win_amd64"},
-                    ]
-                    for name in (
-                        "torch",
-                        "torchvision",
-                        "amd-torch-device-gfx1201",
-                        "amd-torchvision-device-gfx1201",
-                        "rocm-sdk-device-gfx1201",
-                    )
-                }
-            }
-        }
-
         compatible = iter_candidates(catalog, platform="windows", gfx="gfx1201", python_tag="cp312")
         incompatible = iter_candidates(catalog, platform="windows", gfx="gfx1201", python_tag="cp311")
         visible_incompatible = iter_candidates(
@@ -452,6 +455,49 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(compatible[0]["python_compatibility"], "compatible")
         self.assertEqual(incompatible, [])
         self.assertEqual(visible_incompatible[0]["python_compatibility"], "incompatible")
+
+    def test_rejects_package_version_mismatch_even_when_tags_match(self):
+        catalog = _matrix()
+        catalog["_package_snapshots"]["package_snapshots:stable"]["packages"]["torch"][0]["version"] = "2.13.0+rocm7.14.0"
+
+        visible = iter_candidates(
+            catalog,
+            platform="windows",
+            gfx="gfx1201",
+            python_tag="cp312",
+            include_incompatible=True,
+        )
+
+        self.assertEqual(visible[0]["python_compatibility"], "incompatible")
+        self.assertEqual(iter_candidates(catalog, platform="windows", gfx="gfx1201", python_tag="cp312"), [])
+
+    def test_rejects_missing_package_map(self):
+        catalog = _matrix()
+        del catalog["_package_snapshots"]["package_snapshots:stable"]["packages"]["torchaudio"]
+
+        visible = iter_candidates(
+            catalog,
+            platform="windows",
+            gfx="gfx1201",
+            python_tag="cp312",
+            include_incompatible=True,
+        )
+
+        self.assertEqual(visible[0]["python_compatibility"], "incompatible")
+
+    def test_rejects_versionless_artifact(self):
+        catalog = _matrix()
+        catalog["_package_snapshots"]["package_snapshots:stable"]["packages"]["torch"][0]["version"] = None
+
+        visible = iter_candidates(
+            catalog,
+            platform="windows",
+            gfx="gfx1201",
+            python_tag="cp312",
+            include_incompatible=True,
+        )
+
+        self.assertEqual(visible[0]["python_compatibility"], "incompatible")
 
     def test_exposes_historical_candidate_by_exact_rocm_version(self):
         catalog = _matrix()
