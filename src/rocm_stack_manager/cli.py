@@ -314,7 +314,7 @@ def main(argv=None):
             return 1 if failed else 0
 
         if args.command in {"restore", "rollback"}:
-            backup = load_backup(args.backup)
+            backup = load_backup(args.backup, materialize=args.apply)
             if args.apply:
                 result = apply_restore(target, backup)
             else:

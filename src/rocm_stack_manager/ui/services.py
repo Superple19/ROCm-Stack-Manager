@@ -191,7 +191,7 @@ class ManagerService:
 
     def restore_core(self, backup_path, *, apply=False):
         self._require_target()
-        backup = load_backup(backup_path)
+        backup = load_backup(backup_path, materialize=apply)
         if apply:
             return apply_restore(self.target, backup)
         return InstallResult(plan=build_restore_plan(self.target, backup))

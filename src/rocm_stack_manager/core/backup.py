@@ -231,7 +231,7 @@ def create_extension_backup(
     )
 
 
-def load_backup(path):
+def load_backup(path, *, materialize=True):
     """Load and validate a JSON package backup."""
 
     backup_path = Path(path).expanduser().resolve()
@@ -243,11 +243,13 @@ def load_backup(path):
     requirements_path = _resolve_requirements_path(backup_path, document.get("requirements_path"))
     if not requirements:
         raise BackupError(f"backup contains no requirements: {backup_path}")
-    if not requirements_path.is_file():
+    if not requirements_path.is_file() and materialize:
         sibling_path = backup_path.with_suffix(".txt")
         if requirements_path != sibling_path:
             requirements_path = sibling_path
         _atomic_write_text(requirements_path, _requirements_text(requirements))
+    if not requirements_path.is_file():
+        raise BackupError(f"backup requirements file is missing: {requirements_path}")
     expected_hash = document.get("requirements_sha256")
     if expected_hash and hashlib.sha256(requirements_path.read_bytes()).hexdigest() != expected_hash:
         raise BackupError(f"backup requirements hash mismatch: {requirements_path}")
@@ -262,7 +264,7 @@ def load_backup(path):
     )
 
 
-def load_extension_backup(path):
+def load_extension_backup(path, *, materialize=True):
     """Load and validate an extension-only backup."""
 
     backup_path = Path(path).expanduser().resolve()
@@ -274,8 +276,10 @@ def load_extension_backup(path):
         raise BackupError(f"backup is not an extension backup: {backup_path}")
     requirements = tuple(document.get("requirements") or ())
     requirements_path = _resolve_requirements_path(backup_path, document.get("requirements_path"))
-    if not requirements_path.is_file():
+    if not requirements_path.is_file() and materialize:
         _atomic_write_text(requirements_path, _requirements_text(requirements))
+    if not requirements_path.is_file():
+        raise BackupError(f"extension backup requirements file is missing: {requirements_path}")
     expected_hash = document.get("requirements_sha256")
     if expected_hash and hashlib.sha256(requirements_path.read_bytes()).hexdigest() != expected_hash:
         raise BackupError(f"extension backup requirements hash mismatch: {requirements_path}")

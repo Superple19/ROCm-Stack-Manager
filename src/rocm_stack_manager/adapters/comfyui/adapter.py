@@ -117,7 +117,7 @@ class ComfyUIAdapter:
         return apply_extension_plan(target, plan, backup)
 
     def restore_extensions(self, target, backup_path, apply=False):
-        backup = load_extension_backup(backup_path)
+        backup = load_extension_backup(backup_path, materialize=apply)
         if apply:
             return apply_extension_restore(target, backup)
         return build_extension_restore_plan(target, backup)

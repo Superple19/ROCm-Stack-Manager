@@ -135,6 +135,20 @@ class BackupAndApplyTests(unittest.TestCase):
             self.assertTrue(backup.requirements_path.is_file())
             self.assertEqual(backup.requirements, ("torch==2.12.0",))
 
+    def test_read_only_backup_load_does_not_create_missing_requirements_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            backup_path = root / "backup.json"
+            backup_path.write_text(
+                json.dumps({"created_at": "2026-01-01T00:00:00Z", "requirements": ["torch==2.12.0"]}),
+                encoding="utf-8",
+            )
+
+            requirements_path = root / "backup.txt"
+            with self.assertRaises(BackupError):
+                load_backup(backup_path, materialize=False)
+            self.assertFalse(requirements_path.exists())
+
     def test_load_backup_resolves_relative_requirements_path(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
