@@ -235,6 +235,27 @@ class UiTests(unittest.TestCase):
         self.assertIn("2 GFX", window.gfx_status.text())
         window.close()
 
+    def test_inspection_labels_runtime_and_hardware_sources_separately(self):
+        from rocm_stack_manager.core.hardware import HardwareObservation
+
+        window = MainWindow()
+        window._display_inspection(
+            (
+                None,
+                HardwareObservation(
+                    scope="target-runtime",
+                    host_platform="windows",
+                    status="detected",
+                    gfx_targets=("gfx1201",),
+                ),
+                "target Python unavailable",
+            )
+        )
+
+        self.assertIn("Target hardware", window.gfx_status.text())
+        self.assertNotIn("Target runtime", window.gfx_status.text())
+        window.close()
+
     def test_runtime_probe_allows_manual_gfx_when_missing(self):
         window = MainWindow()
         observation = RuntimeObservation(

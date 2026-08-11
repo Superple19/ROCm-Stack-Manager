@@ -155,7 +155,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.apply_extension_button = QtWidgets.QPushButton("Apply extension")
         self.restore_button = QtWidgets.QPushButton("Restore dry-run…")
         self.apply_restore_button = QtWidgets.QPushButton("Apply restore")
-        self.allow_unverified = QtWidgets.QCheckBox("Allow failed resolver evidence")
+        self.allow_unverified = QtWidgets.QCheckBox("Allow unverified evidence")
         for button in (
             self.verify_button,
             self.inventory_button,
@@ -297,10 +297,11 @@ class MainWindow(QtWidgets.QMainWindow):
         runtime, hardware, runtime_error = result
         if runtime is not None:
             runtime_values = runtime.as_dict()
+            self._display_runtime(runtime, append=False)
         else:
             runtime_values = {"status": "unavailable", "error": runtime_error}
+            self._set_gfx_observation(hardware, "Target hardware")
         hardware_values = hardware.as_dict()
-        self._display_runtime(hardware, append=False)
         self._append_json(
             {
                 "runtime_probe": runtime_values,
