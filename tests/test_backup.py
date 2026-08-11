@@ -1,3 +1,4 @@
+import hashlib
 import json
 import tempfile
 import unittest
@@ -12,6 +13,7 @@ from rocm_stack_manager.core.backup import (
     create_extension_backup,
     load_backup,
     load_extension_backup,
+    migrate_backup,
 )
 from rocm_stack_manager.core.detection import detect_target
 from rocm_stack_manager.core.install import (
@@ -122,7 +124,7 @@ class BackupAndApplyTests(unittest.TestCase):
             with self.assertRaises(InstallationError):
                 build_restore_plan(target, backup)
 
-    def test_load_backup_recreates_missing_requirements_file(self):
+    def test_load_backup_rejects_legacy_schema_without_materializing(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             backup_path = root / "backup.json"
@@ -131,10 +133,9 @@ class BackupAndApplyTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            backup = load_backup(backup_path)
-
-            self.assertTrue(backup.requirements_path.is_file())
-            self.assertEqual(backup.requirements, ("torch==2.12.0",))
+            with self.assertRaisesRegex(BackupError, "migrate-backup"):
+                load_backup(backup_path)
+            self.assertFalse((root / "backup.txt").exists())
 
     def test_read_only_backup_load_does_not_create_missing_requirements_file(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -146,7 +147,7 @@ class BackupAndApplyTests(unittest.TestCase):
             )
 
             requirements_path = root / "backup.txt"
-            with self.assertRaises(BackupError):
+            with self.assertRaisesRegex(BackupError, "migrate-backup"):
                 load_backup(backup_path, materialize=False)
             self.assertFalse(requirements_path.exists())
 
@@ -174,18 +175,21 @@ class BackupAndApplyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             backup_path = root / "backup.json"
+            (root / "recorded.txt").write_text("torch==2.12.0\n", encoding="utf-8")
             backup_path.write_text(
                 json.dumps(
                     {
                         "created_at": "2026-01-01T00:00:00Z",
                         "requirements_path": "recorded.txt",
                         "requirements": ["torch==2.12.0"],
+                        "schema_version": 1,
+                        "requirements_sha256": hashlib.sha256(
+                            (root / "recorded.txt").read_bytes()
+                        ).hexdigest(),
                     }
                 ),
                 encoding="utf-8",
             )
-            (root / "recorded.txt").write_text("torch==2.12.0\n", encoding="utf-8")
-
             backup = load_backup(backup_path)
 
             self.assertEqual(backup.requirements_path, root / "recorded.txt")
@@ -195,7 +199,14 @@ class BackupAndApplyTests(unittest.TestCase):
             root = Path(directory)
             backup_path = root / "backup.json"
             backup_path.write_text(
-                json.dumps({"requirements": ["torch==2.12.0"], "requirements_path": "../outside.txt"}),
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "requirements": ["torch==2.12.0"],
+                        "requirements_path": "../outside.txt",
+                        "requirements_sha256": "0" * 64,
+                    }
+                ),
                 encoding="utf-8",
             )
             with self.assertRaises(BackupError):
@@ -209,6 +220,7 @@ class BackupAndApplyTests(unittest.TestCase):
             backup_path = root / "backup.json"
             backup_path.write_text(
                 json.dumps({
+                    "schema_version": 1,
                     "requirements": ["torch==2.12.0"],
                     "requirements_path": requirements_path.name,
                     "requirements_sha256": "0" * 64,
@@ -273,7 +285,15 @@ class BackupAndApplyTests(unittest.TestCase):
             requirements = root / "extensions.txt"
             requirements.write_text("", encoding="utf-8")
             path.write_text(
-                '{"kind":"extensions","requirements":[],"requirements_path":"extensions.txt"}',
+                json.dumps(
+                    {
+                        "kind": "extensions",
+                        "schema_version": 1,
+                        "requirements": [],
+                        "requirements_path": "extensions.txt",
+                        "requirements_sha256": hashlib.sha256(requirements.read_bytes()).hexdigest(),
+                    }
+                ),
                 encoding="utf-8",
             )
             (root / "target").mkdir()
@@ -310,3 +330,63 @@ class BackupAndApplyTests(unittest.TestCase):
 
         self.assertEqual(args.action, "apply")
         self.assertTrue(args.apply)
+
+    def test_migrate_backup_cli_requires_distinct_output(self):
+        args = parse_args(
+            ["migrate-backup", "--backup", "legacy.json", "--output", "current.json"]
+        )
+
+        self.assertEqual(args.command, "migrate-backup")
+        self.assertEqual(args.backup, Path("legacy.json"))
+        self.assertEqual(args.output, Path("current.json"))
+
+    def test_migrate_backup_writes_current_schema_and_hash(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            legacy = root / "legacy.json"
+            legacy.write_text(
+                json.dumps(
+                    {
+                        "created_at": "2026-01-01T00:00:00Z",
+                        "requirements": ["torch==2.12.0"],
+                        "target_root": str(root / "target"),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            migrated = migrate_backup(legacy, root / "migrated.json")
+
+            document = json.loads(migrated.path.read_text(encoding="utf-8"))
+            self.assertEqual(document["schema_version"], 1)
+            self.assertEqual(
+                document["requirements_sha256"],
+                hashlib.sha256(migrated.requirements_path.read_bytes()).hexdigest(),
+            )
+            self.assertEqual(load_backup(migrated.path).requirements, ("torch==2.12.0",))
+            self.assertTrue(legacy.exists())
+
+    def test_migrate_backup_does_not_overwrite_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            legacy = root / "legacy.json"
+            legacy.write_text(json.dumps({"requirements": ["torch==2.12.0"]}), encoding="utf-8")
+
+            with self.assertRaisesRegex(BackupError, "different from the source"):
+                migrate_backup(legacy, legacy)
+
+    def test_current_backup_requires_hash_and_sidecar(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "backup.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "requirements": ["torch==2.12.0"],
+                        "requirements_path": "backup.txt",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(BackupError, "hash is missing"):
+                load_backup(path)

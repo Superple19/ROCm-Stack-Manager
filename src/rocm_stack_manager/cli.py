@@ -17,7 +17,7 @@ from .core.adapter import (
     PythonPackageAdapter,
 )
 from .core.catalog import CatalogError, ensure_catalog, iter_candidates, load_catalog
-from .core.backup import BackupError, create_backup, load_backup
+from .core.backup import BackupError, create_backup, load_backup, migrate_backup
 from .core.detection import TargetDetectionError
 from .core.hardware import detected_gfx_targets, normalize_gfx
 from .core.install import (
@@ -166,6 +166,19 @@ def parse_args(argv=None):
     _add_adapter_option(restore)
     restore.add_argument("--apply", action="store_true", help="Apply the restore; default is dry-run")
     restore.add_argument("--json", action="store_true", dest="json_output")
+
+    migrate = subparsers.add_parser(
+        "migrate-backup",
+        help="Convert a legacy backup to the current hashed sidecar format",
+    )
+    migrate.add_argument("--backup", type=Path, required=True, help="Legacy backup JSON")
+    migrate.add_argument("--output", type=Path, required=True, help="New backup JSON path")
+    migrate.add_argument(
+        "--kind",
+        choices=("core", "extensions"),
+        help="Backup kind when the legacy JSON does not identify it",
+    )
+    migrate.add_argument("--json", action="store_true", dest="json_output")
     return parser.parse_args(argv)
 
 
@@ -283,6 +296,15 @@ def _operation_exit_code(result):
 def main(argv=None):
     args = parse_args(argv)
     try:
+        if args.command == "migrate-backup":
+            snapshot = migrate_backup(args.backup, args.output, kind=args.kind)
+            if args.json_output:
+                print(json.dumps(snapshot.as_dict(), indent=2, sort_keys=True))
+            else:
+                print(f"Migrated backup: {snapshot.path}")
+                print(f"Requirements: {snapshot.requirements_path}")
+                print(f"SHA-256: {snapshot.requirements_sha256}")
+            return 0
         adapter = get_adapter(args.adapter)
         target = adapter.detect(args.target)
         if args.command == "detect":
