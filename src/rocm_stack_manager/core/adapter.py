@@ -48,7 +48,19 @@ class RuntimeAdapter(Protocol):
 class PythonPackageAdapter(Protocol):
     """Optional capability for adapters with a target Python resolver."""
 
+    id: str
+
     def python_tag(self, target: Any) -> str | None:
+        ...
+
+
+@runtime_checkable
+class TargetProbeAdapter(Protocol):
+    """Optional capability for target-local runtime and GFX probing."""
+
+    id: str
+
+    def verify(self, target: Any) -> Any:
         ...
 
 
@@ -64,11 +76,14 @@ class HardwareProvider(Protocol):
 class ExtensionProvider(Protocol):
     """Optional application-specific extension inventory and planning."""
 
+    id: str
+
     def extension_inventory(
         self,
         target: Any,
         candidate: dict | None = None,
         profile_documents: dict | None = None,
+        extension_catalog: dict | None = None,
     ) -> dict:
         ...
 
@@ -88,6 +103,8 @@ class ExtensionProvider(Protocol):
 class ExtensionInstaller(Protocol):
     """Optional capability for explicit extension apply and recovery."""
 
+    id: str
+
     def create_extension_backup(self, target: Any, plan: Any, destination=None) -> Any:
         ...
 
@@ -101,6 +118,8 @@ class ExtensionInstaller(Protocol):
 @runtime_checkable
 class ExtensionVerifier(Protocol):
     """Optional capability for target-local extension verification export."""
+
+    id: str
 
     def extension_verify(
         self,

@@ -281,9 +281,9 @@ deptry .
 vulture src tests --min-confidence 100 --ignore-names options
 ```
 
-`ruff check` is required in CI. Formatting, type checking, dependency
-analysis, and dead-code analysis are advisory while the existing codebase is
-being cleaned up. Do not run `ruff format --fix` as part of an unrelated
+`ruff check` and `pyright` are required in CI. Pyright remains in basic mode.
+Formatting, dependency analysis, and dead-code analysis are advisory while
+the existing codebase is being cleaned up. Do not run `ruff format --fix` as part of an unrelated
 behavior change. Vulture findings require review because CLI entry points and
 dynamic adapter loading can look unused to static analysis. The tools are
 development-only; the normal Manager installation does not include them.

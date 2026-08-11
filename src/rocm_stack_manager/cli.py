@@ -15,6 +15,8 @@ from .core.adapter import (
     ExtensionProvider,
     ExtensionVerifier,
     PythonPackageAdapter,
+    RuntimeAdapter,
+    TargetProbeAdapter,
 )
 from .core.catalog import CatalogError, ensure_catalog, iter_candidates, load_catalog
 from .core.backup import BackupError, create_backup, load_backup, migrate_backup
@@ -250,7 +252,7 @@ def _resolve_gfx(target, adapter, requested):
         if normalized is None:
             raise ValueError(f"invalid GFX target: {requested}")
         return normalized, False
-    if not isinstance(adapter, PythonPackageAdapter):
+    if not isinstance(adapter, TargetProbeAdapter):
         raise ValueError("GFX was not provided and this adapter cannot probe a target Python")
     observation = adapter.verify(target)
     detected = detected_gfx_targets(observation)
@@ -617,6 +619,10 @@ def main(argv=None):
                     print(result.output.rstrip())
             return 0 if result.status == "resolver_verified" else 2
         if args.command == "inventory":
+            if not isinstance(adapter, RuntimeAdapter):
+                raise CapabilityUnavailable(
+                    f"adapter does not provide inventory operations: {adapter.id}"
+                )
             _print_inventory(adapter.inventory(target, candidate), args.json_output)
             return 0
         if args.command == "install":
@@ -650,6 +656,10 @@ def main(argv=None):
                     print(result.output.rstrip())
             return _operation_exit_code(result)
         catalog_hash = hashlib.sha256(catalog_path.read_bytes()).hexdigest()
+        if not isinstance(adapter, RuntimeAdapter):
+            raise CapabilityUnavailable(
+                f"adapter does not provide plan operations: {adapter.id}"
+            )
         plan = adapter.plan(
             target,
             candidate,

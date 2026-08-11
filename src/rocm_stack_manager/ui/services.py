@@ -15,6 +15,7 @@ from ..core.adapter import (
 )
 from ..core.backup import create_backup, load_backup, load_extension_backup
 from ..core.catalog import ensure_catalog, iter_candidates, load_catalog
+from ..core.detection import TargetLayout
 from ..core.hardware import detected_gfx_targets, hardware_from_devices, probe_hardware
 from ..core.extension_resolver import run_extension_resolver
 from ..core.install import (
@@ -48,7 +49,7 @@ class ManagerService:
     def __init__(self, adapter_name="comfyui"):
         self.adapter_name = adapter_name
         self.adapter = get_adapter(adapter_name)
-        self.target = None
+        self.target: TargetLayout | None = None
         self.catalog = None
         self.catalog_state = None
 
@@ -126,19 +127,19 @@ class ManagerService:
         return self.adapter.verify(self.target)
 
     def hardware(self, runtime=None):
-        self._require_target()
+        target = self._require_target()
         runtime_devices = getattr(runtime, "devices", ()) if runtime is not None else ()
         if runtime_devices:
             return hardware_from_devices(
                 runtime_devices,
                 scope="target-runtime",
                 source="application-runtime",
-                target_root=self.target.root,
+                target_root=target.root,
                 host_platform=getattr(runtime, "host_platform", None),
             )
         if isinstance(self.adapter, HardwareProvider):
-            return self.adapter.hardware(self.target)
-        return probe_hardware(self.target)
+            return self.adapter.hardware(target)
+        return probe_hardware(target)
 
     def host_hardware(self):
         """Probe host GFX before an application target has been selected."""
@@ -260,3 +261,4 @@ class ManagerService:
     def _require_target(self):
         if self.target is None:
             raise ValueError("detect a target before running this operation")
+        return self.target

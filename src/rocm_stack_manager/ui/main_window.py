@@ -86,7 +86,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.platform_combo.setCurrentText("windows" if os.name == "nt" else "linux")
         self.gfx_edit = QtWidgets.QComboBox()
         self.gfx_edit.setEditable(True)
-        self.gfx_edit.lineEdit().setPlaceholderText("Detected GFX or enter manually")
+        self._set_gfx_placeholder("Detected GFX or enter manually")
         self.gfx_status = QtWidgets.QLabel("No GFX detected")
         self.channel_combo = QtWidgets.QComboBox()
         self.channel_combo.addItems(("all", "stable", "nightly", "staging"))
@@ -298,16 +298,21 @@ class MainWindow(QtWidgets.QMainWindow):
             self.gfx_status.setText(f"{label}: {detected[0]}")
         elif detected:
             self.gfx_edit.setCurrentIndex(-1)
-            self.gfx_edit.lineEdit().setPlaceholderText("Select a detected GFX target")
+            self._set_gfx_placeholder("Select a detected GFX target")
             self.gfx_status.setText(f"{label}: {len(detected)} GFX targets")
         else:
             self.gfx_edit.setCurrentIndex(-1)
-            self.gfx_edit.lineEdit().setPlaceholderText("Detected GFX unavailable; enter manually")
+            self._set_gfx_placeholder("Detected GFX unavailable; enter manually")
             self.gfx_status.setText(f"{label}: no GFX; manual entry allowed")
         self.gfx_edit.blockSignals(False)
         host_platform = values.get("host_platform")
         if host_platform in {self.platform_combo.itemText(index) for index in range(self.platform_combo.count())}:
             self.platform_combo.setCurrentText(host_platform)
+
+    def _set_gfx_placeholder(self, text):
+        line_edit = self.gfx_edit.lineEdit()
+        if line_edit is not None:
+            line_edit.setPlaceholderText(text)
 
     def _display_host_hardware(self, observation):
         self._set_gfx_observation(observation, "Host detected")

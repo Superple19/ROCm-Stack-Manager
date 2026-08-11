@@ -122,7 +122,7 @@ def _candidate_tool_paths(target):
             )
         )
     roots.extend((target.root / "Scripts", target.root / "bin"))
-    paths = []
+    paths: list[Path] = []
     for root in roots:
         for name in _TOOL_NAMES:
             for suffix in (".exe", ""):
