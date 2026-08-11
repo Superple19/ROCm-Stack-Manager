@@ -18,6 +18,7 @@ from .core.adapter import (
 from .core.catalog import CatalogError, ensure_catalog, iter_candidates, load_catalog
 from .core.backup import BackupError, create_backup, load_backup
 from .core.detection import TargetDetectionError
+from .core.hardware import detected_gfx_targets, normalize_gfx
 from .core.install import (
     InstallationError,
     InstallResult,
@@ -48,7 +49,10 @@ def _add_catalog_options(parser):
     )
     parser.add_argument("--target", type=Path, required=True, help="Portable root or ComfyUI directory")
     parser.add_argument("--platform", choices=("windows", "linux"), default=_host_platform())
-    parser.add_argument("--gfx", required=True, help="GFX target, for example gfx1201")
+    parser.add_argument(
+        "--gfx",
+        help="GFX target, for example gfx1201; infer a single target-local GFX when omitted",
+    )
     parser.add_argument("--channel", choices=("stable", "nightly", "staging"))
     parser.add_argument("--rocm", dest="rocm_version", help="Exact ROCm version filter")
 
@@ -199,6 +203,28 @@ def _candidate_for_plan(catalog, args, python_tag):
         if candidate["id"] == args.candidate:
             return candidate
     raise CatalogError(f"candidate not found for {args.platform}/{args.gfx}: {args.candidate}")
+
+
+def _resolve_gfx(target, adapter, requested):
+    """Normalize an explicit GFX or infer one unambiguous target-local value."""
+
+    if requested:
+        normalized = normalize_gfx(requested)
+        if normalized is None:
+            raise ValueError(f"invalid GFX target: {requested}")
+        return normalized, False
+    if not isinstance(adapter, PythonPackageAdapter):
+        raise ValueError("GFX was not provided and this adapter cannot probe a target Python")
+    observation = adapter.verify(target)
+    detected = detected_gfx_targets(observation)
+    if len(detected) == 1:
+        return detected[0], True
+    if len(detected) > 1:
+        values = ", ".join(detected)
+        raise ValueError(f"multiple target GFX values detected ({values}); pass --gfx to choose one")
+    detail = getattr(observation, "error", None)
+    suffix = f" ({detail})" if detail else ""
+    raise ValueError(f"target GFX was not detected; pass --gfx gfx1201 manually{suffix}")
 
 
 def _print_inventory(inventory, json_output):
@@ -465,6 +491,11 @@ def main(argv=None):
                 f"adapter does not provide Python package candidate operations: {adapter.id}"
             )
         python_tag = adapter.python_tag(target)
+        inferred_gfx = False
+        if args.command in {"candidates", "plan", "inventory", "install"}:
+            args.gfx, inferred_gfx = _resolve_gfx(target, adapter, args.gfx)
+            if inferred_gfx and not getattr(args, "json_output", False):
+                print(f"Detected target GFX: {args.gfx}")
         if args.command == "candidates":
             candidates = iter_candidates(
                 catalog,
