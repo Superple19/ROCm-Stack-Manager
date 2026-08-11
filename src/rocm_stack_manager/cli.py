@@ -173,6 +173,14 @@ def parse_args(argv=None):
     restore.add_argument("--backup", type=Path, required=True, help="Backup JSON created by install --apply")
     _add_adapter_option(restore)
     restore.add_argument("--apply", action="store_true", help="Apply the restore; default is dry-run")
+    restore.add_argument(
+        "--allow-network-restore",
+        action="store_true",
+        help=(
+            "Explicitly allow a version-pinned network restore when no valid pre-change "
+            "wheelhouse is available"
+        ),
+    )
     restore.add_argument("--json", action="store_true", dest="json_output")
 
     migrate = subparsers.add_parser(
@@ -351,7 +359,11 @@ def main(argv=None):
             )
 
         if args.command in {"restore", "rollback"}:
-            backup = load_backup(args.backup, materialize=args.apply)
+            backup = load_backup(
+                args.backup,
+                materialize=args.apply,
+                allow_network_restore=args.allow_network_restore,
+            )
             if args.apply:
                 result = apply_restore(target, backup)
             else:

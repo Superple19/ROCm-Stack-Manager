@@ -337,6 +337,10 @@ def load_catalog(path):
     document = _read_json(catalog_path)
     if "targets" in document:
         _validate_matrix_document(document)
+        document.setdefault("_package_snapshots", {})
+        document.setdefault("_historical_candidates", [])
+        document.setdefault("_collection_statuses", None)
+        document["_catalog_generated_at"] = document.get("generated_at")
         _attach_profile(document, catalog_path)
         return document
 
@@ -361,6 +365,8 @@ def load_catalog(path):
         raise CatalogError(f"compatibility matrix has no targets: {matrix_path}")
     matrix["_package_snapshots"] = {}
     matrix["_historical_candidates"] = []
+    matrix["_collection_statuses"] = None
+    matrix["_catalog_generated_at"] = document.get("generated_at")
     matrix["_extension_catalog"] = {
         "schema_version": 1,
         "generated_at": matrix.get("generated_at"),
@@ -387,6 +393,10 @@ def load_catalog(path):
                 matrix["_historical_candidates"] = document.get("candidates", [])
             elif artifact_id == "extension_catalog":
                 matrix["_extension_catalog"] = document
+            elif artifact_id.startswith("collection_status:"):
+                if matrix["_collection_statuses"] is None:
+                    matrix["_collection_statuses"] = {}
+                matrix["_collection_statuses"][artifact_id] = document
     return matrix
 
 
@@ -525,7 +535,10 @@ def _candidate_from_channel(target, platform, channel, details, catalog, python_
         "python_compatibility": _python_compatibility(
             catalog, platform, channel, target["gfx"], python_tag, expected_versions
         ),
+        "resolver_status": "not_collected",
     }
+    if available:
+        candidate["candidate_kind"] = "artifact_only"
     profile_status, profile_warnings, profile_id = evaluate_candidate(
         candidate, catalog.get("_comfyui_profile")
     )
@@ -540,7 +553,7 @@ def _candidate_from_channel(target, platform, channel, details, catalog, python_
     return candidate
 
 
-def _historical_candidate(candidate, gfx, python_tag, profile=None):
+def _historical_candidate(candidate, gfx, python_tag, catalog):
     gfx_targets = set(candidate.get("available_gfx_targets") or candidate.get("gfx_targets") or [])
     if gfx not in gfx_targets:
         return None
@@ -555,7 +568,10 @@ def _historical_candidate(candidate, gfx, python_tag, profile=None):
     evidence_status = candidate.get("evidence_status") or {}
     wheel_urls = list(candidate.get("wheel_urls") or [])
     rocm_version = candidate.get("rocm_version")
-    if candidate.get("distribution_family", "legacy") == "legacy" and rocm_version:
+    distribution_family = candidate.get("distribution_family", "legacy")
+    package_specs = []
+    index_url = None
+    if distribution_family == "legacy" and rocm_version:
         marker = f"/rocm-rel-{rocm_version}/"
         source_url = next(
             (
@@ -567,9 +583,37 @@ def _historical_candidate(candidate, gfx, python_tag, profile=None):
         )
         if source_url and source_url not in wheel_urls:
             wheel_urls.insert(0, source_url)
+    elif distribution_family == "therock":
+        torch_version = candidate.get("torch_version")
+        torchvision_version = candidate.get("torchvision_version")
+        torchaudio_version = candidate.get("torchaudio_version")
+        source = (catalog.get("sources") or {}).get(candidate.get("source_id"), {})
+        index_url = source.get("url")
+        if all((rocm_version, torch_version, torchvision_version, torchaudio_version, gfx)):
+            package_specs = [
+                f"rocm=={rocm_version}",
+                f"torch=={torch_version}",
+                f"torchvision=={torchvision_version}",
+                f"torchaudio=={torchaudio_version}",
+                f"rocm-sdk-device-{gfx}=={rocm_version}",
+                f"amd-torch-device-{gfx}=={torch_version}",
+                f"amd-torchvision-device-{gfx}=={torchvision_version}",
+            ]
+    install_source_available = bool(
+        wheel_urls or (distribution_family == "therock" and package_specs and index_url)
+    )
+    therock_installable = bool(
+        distribution_family == "therock"
+        and install_source_available
+        and candidate.get("platform") in SUPPORTED_PLATFORMS
+        and candidate.get("channel")
+        and gfx
+        and python_tag
+        and python_compatibility == "compatible"
+    )
     candidate_result = {
         "id": candidate.get("id"),
-        "distribution_family": candidate.get("distribution_family", "legacy"),
+        "distribution_family": distribution_family,
         "platform": candidate.get("platform"),
         "channel": candidate.get("channel"),
         "gfx": gfx,
@@ -585,12 +629,24 @@ def _historical_candidate(candidate, gfx, python_tag, profile=None):
         "python_compatibility": python_compatibility,
         "resolver_status": evidence_status.get("resolver", "not_collected"),
         "wheel_urls": wheel_urls,
-        "package_specs": [],
-        "candidate_kind": "installable" if artifact_available and wheel_urls else (
-            "artifact_only" if artifact_available else "unavailable"
+        "package_specs": package_specs,
+        "index_url": index_url,
+        "candidate_kind": (
+            "installable"
+            if artifact_available
+            and (
+                therock_installable
+                if distribution_family == "therock"
+                else install_source_available
+            )
+            else "artifact_only"
+            if artifact_available
+            else "unavailable"
         ),
     }
-    profile_status, profile_warnings, profile_id = evaluate_candidate(candidate_result, profile)
+    profile_status, profile_warnings, profile_id = evaluate_candidate(
+        candidate_result, catalog.get("_comfyui_profile")
+    )
     candidate_result.update(
         {
             "profile_id": profile_id,
@@ -600,6 +656,19 @@ def _historical_candidate(candidate, gfx, python_tag, profile=None):
     )
     candidate_result["candidate_hash"] = candidate_hash(candidate_result)
     return candidate_result
+
+
+def _candidate_package_key(candidate):
+    return (
+        candidate.get("distribution_family"),
+        candidate.get("platform"),
+        candidate.get("channel"),
+        candidate.get("gfx"),
+        candidate.get("rocm_version"),
+        candidate.get("torch_version"),
+        candidate.get("torchvision_version"),
+        candidate.get("torchaudio_version"),
+    )
 
 
 def iter_candidates(
@@ -640,6 +709,29 @@ def iter_candidates(
             return False
         return True
 
+    history_keys = set()
+    history_candidates = []
+    for historical in catalog.get("_historical_candidates", []):
+        if historical.get("platform") != platform:
+            continue
+        if channel and historical.get("channel") != channel:
+            continue
+        if rocm_version and historical.get("rocm_version") != rocm_version:
+            continue
+        if not gfx:
+            continue
+        candidate = _historical_candidate(historical, gfx, python_tag, catalog)
+        if not candidate:
+            continue
+        history_keys.add(_candidate_package_key(candidate))
+        if (
+            (include_unavailable or candidate["artifact_available"])
+            and (include_incompatible or candidate["python_compatibility"] != "incompatible")
+            and include(candidate)
+        ):
+            history_candidates.append(candidate)
+
+    candidates.extend(history_candidates)
     for target in catalog.get("targets", []):
         target_gfx = target.get("gfx")
         if gfx and target_gfx != gfx:
@@ -656,33 +748,14 @@ def iter_candidates(
             candidate = _candidate_from_channel(
                 target, platform, channel_name, details or {}, catalog, python_tag
             )
+            if _candidate_package_key(candidate) in history_keys:
+                continue
             if (
                 (include_unavailable or candidate["artifact_available"])
                 and (include_incompatible or candidate["python_compatibility"] != "incompatible")
                 and include(candidate)
             ):
                 candidates.append(candidate)
-    for historical in catalog.get("_historical_candidates", []):
-        if historical.get("platform") != platform:
-            continue
-        if channel and historical.get("channel") != channel:
-            continue
-        if rocm_version and historical.get("rocm_version") != rocm_version:
-            continue
-        if not gfx:
-            continue
-        candidate = _historical_candidate(
-            historical, gfx, python_tag, catalog.get("_comfyui_profile")
-        )
-        if not candidate:
-            continue
-        if (
-            (include_unavailable or candidate["artifact_available"])
-            and (include_incompatible or candidate["python_compatibility"] != "incompatible")
-            and include(candidate)
-        ):
-            candidates.append(candidate)
-
     def version_key(value):
         text = str(value or "").strip()
         if not text:

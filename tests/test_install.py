@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 import json
+import hashlib
 from pathlib import Path
 from unittest.mock import patch
 from types import SimpleNamespace
@@ -57,6 +58,28 @@ class InstallPlanTests(unittest.TestCase):
             install_command=("--no-index", "--find-links", str(artifacts), "--require-hashes", "--requirement", str(requirements)),
         )
 
+    def _core_backup(self, root):
+        requirements = root / "backup.txt"
+        requirements.write_text("torch==2.12.0\n", encoding="utf-8")
+        path = root / "backup.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 2,
+                    "requirements": ["torch==2.12.0"],
+                    "requirements_path": requirements.name,
+                    "requirements_sha256": hashlib.sha256(requirements.read_bytes()).hexdigest(),
+                }
+            ),
+            encoding="utf-8",
+        )
+        return BackupSnapshot(path, requirements, "", ("torch==2.12.0",))
+
+    def _archive_stub(self, root):
+        archive = root / "backup-archive"
+        archive.mkdir()
+        return SimpleNamespace(root=archive)
+
     def test_historical_wheels_create_warning_only_dry_run(self):
         candidate = {
             "id": "legacy:stable:7.2.1",
@@ -72,7 +95,7 @@ class InstallPlanTests(unittest.TestCase):
         self.assertFalse(result.applied)
         self.assertIn("--no-input", result.plan.command)
         self.assertIn("resolver evidence is failed", result.plan.warnings[0])
-        self.assertTrue(any("--allow-unverified" in warning for warning in result.plan.warnings))
+        self.assertTrue(any("fresh resolver" in warning for warning in result.plan.warnings))
 
     def test_current_candidate_uses_target_python_and_index(self):
         candidate = {
@@ -280,12 +303,21 @@ class InstallPlanTests(unittest.TestCase):
             },
         )()
         with tempfile.TemporaryDirectory() as directory:
-            target = self._target(Path(directory))
-            backup = BackupSnapshot(Path(directory) / "backup.json", Path(directory) / "requirements.txt", "", ())
+            root = Path(directory)
+            target = self._target(root)
+            backup = self._core_backup(root)
             with patch("rocm_stack_manager.core.install.collect_inventory", return_value=inventory):
-                with patch("rocm_stack_manager.core.install.stage_candidate", return_value=self._staged(Path(directory))):
-                    with patch("rocm_stack_manager.core.install.subprocess.run", return_value=completed) as run:
-                        result = apply_install(target, candidate, backup)
+                with patch("rocm_stack_manager.core.install.stage_candidate", return_value=self._staged(root)):
+                    with patch(
+                        "rocm_stack_manager.core.install.stage_backup_wheelhouse",
+                        return_value=self._archive_stub(root),
+                    ):
+                        with patch(
+                            "rocm_stack_manager.core.install.attach_wheelhouse",
+                            return_value=backup,
+                        ):
+                            with patch("rocm_stack_manager.core.install.subprocess.run", return_value=completed) as run:
+                                result = apply_install(target, candidate, backup)
 
         self.assertEqual(result.returncode, 0)
         self.assertEqual(run.call_args_list[0].args[0][3], "install")

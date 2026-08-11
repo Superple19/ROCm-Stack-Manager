@@ -45,6 +45,10 @@ the Matrix repository. Pass a local catalog for an offline or private setup:
 Without `--catalog`, the first catalog command downloads the configured public
 snapshot into the platform cache. Use `ROCM_MATRIX_CATALOG_URL` for a trusted
 mirror. A failed download never replaces an existing cached snapshot.
+Local and cached catalog files are always SHA-256-bound to plans. Validated
+Matrix collection-status artifacts supply the UI's failed-source list; when a
+direct matrix file has no status artifacts, the UI reports that state as
+unknown.
 
 ## Safe core flow
 
@@ -70,9 +74,12 @@ Examples:
 
 The last command is a dry-run. `--apply` is required to execute pip. An apply
 first runs a fresh target-bound resolver preflight, stages exact artifacts in a
-target-local wheelhouse, and then creates the package backup. The manager does
-not automatically delete or restore packages after a failed install. Restore
-is explicit and does not prune unrelated packages.
+target-local wheelhouse, records the current environment, and archives a
+separate hash-verified wheelhouse for those pre-change requirements. If an
+exact requirement or package artifact cannot be archived, apply stops before
+uninstalling or installing anything. The manager does not automatically delete
+or restore packages after a failed install. Restore is explicit and does not
+prune unrelated packages.
 
 The target probe is scoped to the selected interpreter. A result such as
 `runtime_status=detected`, `hardware_status=detected`, and
@@ -83,9 +90,15 @@ all GFX targets.
 targeted `pip --dry-run --ignore-installed` preflight and does not install or
 promote evidence to Matrix.
 
-Restore accepts only the current backup schema. Before a restore plan is
-created, the manager verifies the JSON schema version, the requirements
-sidecar SHA-256, and that the sidecar matches the embedded requirements list.
+Installable TheRock candidates come from Matrix `package_history` and retain
+its resolver status. Independently observed current-channel versions remain
+`artifact_only` until the exact set appears in package history; artifact-only
+records cannot produce plan, resolve, or install commands.
+
+Core backup schema 2 identifies its wheelhouse as the pre-change environment.
+Before a restore plan is created, the manager verifies the JSON schema version,
+requirements sidecar SHA-256, package-version equivalence, wheelhouse role,
+manifest, and artifact hashes.
 Restore dry-runs are read-only and never create a missing sidecar. Convert an
 older backup explicitly, without overwriting it:
 
@@ -96,9 +109,21 @@ older backup explicitly, without overwriting it:
 ```
 
 The migration command only writes the new JSON and sidecar; it never installs,
-restores, or uploads anything. New applies archive a hash-verified wheelhouse,
-so restore is offline and byte-exact for those artifacts. Older backups remain
-version-pinned because they have no wheelhouse.
+restores, or uploads anything. New applies archive hash-verified pre-change
+package bytes for offline restore. Core v1 wheelhouses are accepted only when
+they match the recorded requirements. Otherwise the backup is rejected unless
+the user explicitly requests a version-pinned network plan:
+
+```powershell
+.\.venv\Scripts\python.exe -m rocm_stack_manager restore `
+  --target C:\path\to\target `
+  --backup C:\path\to\backup.json `
+  --allow-network-restore
+```
+
+Network restore remains a dry-run unless `--apply` is also present. Restore
+does not prune extra packages, so the guarantee covers archived package bytes,
+not byte-identical Python environment state.
 
 ## Extension flow
 

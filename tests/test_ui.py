@@ -5,6 +5,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 PY_SIDE_AVAILABLE = importlib.util.find_spec("PySide6") is not None
@@ -14,6 +15,7 @@ if PY_SIDE_AVAILABLE:
     from PySide6 import QtWidgets
 
     from rocm_stack_manager.core.detection import TargetLayout
+    from rocm_stack_manager.core.catalog import CatalogError
     from rocm_stack_manager.core.verify import RuntimeObservation
     from rocm_stack_manager.ui.main_window import MainWindow
     from rocm_stack_manager.ui.services import ManagerService, detected_gfx_targets
@@ -182,11 +184,12 @@ class UiTests(unittest.TestCase):
                 }),
                 encoding="utf-8",
             )
+            catalog_hash = hashlib.sha256(catalog.read_bytes()).hexdigest()
             (root / "source-manifest.json").write_text(
                 json.dumps(
                     {
                         "fetched_at": "2026-08-11T00:00:00Z",
-                        "catalog_sha256": "abc123",
+                        "catalog_sha256": catalog_hash,
                         "artifact_count": 4,
                     }
                 ),
@@ -194,11 +197,212 @@ class UiTests(unittest.TestCase):
             )
             service = ManagerService()
             loaded, state = service.load_catalog(catalog)
+            self.assertIsNone(service.catalog)
+            service.commit_catalog((loaded, state))
             self.assertEqual(loaded["targets"], [])
             self.assertEqual(state.path, catalog.resolve())
             self.assertEqual(state.source, "local file")
             self.assertEqual(state.fetched_at, "2026-08-11T00:00:00Z")
             self.assertEqual(state.artifact_count, 4)
+            self.assertEqual(state.catalog_sha256, catalog_hash)
+            self.assertIsNone(state.source_failure_count)
+            self.assertIs(service.catalog, loaded)
+
+    def test_service_rejects_local_catalog_manifest_hash_mismatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            matrix_path = root / "matrix.json"
+            matrix_path.write_text(
+                json.dumps({"schema_version": 1, "targets": []}),
+                encoding="utf-8",
+            )
+            catalog = root / "catalog.json"
+            catalog.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "artifacts": [
+                            {
+                                "id": "compatibility_matrix",
+                                "path": "matrix.json",
+                                "schema": "schemas/compatibility-matrix.schema.json",
+                                "schema_version": 1,
+                                "sha256": hashlib.sha256(matrix_path.read_bytes()).hexdigest(),
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (root / "source-manifest.json").write_text(
+                json.dumps({"catalog_sha256": "0" * 64}),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(CatalogError, "catalog hash"):
+                ManagerService().load_catalog(catalog)
+
+    def test_direct_matrix_ignores_unrelated_parent_catalog_manifest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            data = root / "data"
+            data.mkdir()
+            matrix_path = data / "matrix.json"
+            matrix_path.write_text(
+                json.dumps({"schema_version": 1, "targets": []}),
+                encoding="utf-8",
+            )
+            (root / "source-manifest.json").write_text(
+                json.dumps({"catalog_sha256": "0" * 64}),
+                encoding="utf-8",
+            )
+
+            _loaded, state = ManagerService().load_catalog(matrix_path)
+
+            self.assertEqual(
+                state.catalog_sha256,
+                hashlib.sha256(matrix_path.read_bytes()).hexdigest(),
+            )
+            self.assertIsNone(state.source_failure_count)
+
+    def test_service_reports_collection_failures_from_catalog_artifacts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            matrix_path = root / "matrix.json"
+            matrix_path.write_text(
+                json.dumps({"schema_version": 1, "generated_at": "2026-08-11T00:00:00Z", "targets": []}),
+                encoding="utf-8",
+            )
+            status_path = root / "status.json"
+            status_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "results": [
+                            {"source_id": "therock-github-workflows", "status": "failed"},
+                            {"source_id": "therock-releases", "status": "failed"},
+                            {"source_id": "stable", "status": "passed"},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            catalog = root / "catalog.json"
+            catalog.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "artifacts": [
+                            {
+                                "id": "compatibility_matrix",
+                                "path": "matrix.json",
+                                "schema": "schemas/compatibility-matrix.schema.json",
+                                "schema_version": 1,
+                                "sha256": hashlib.sha256(matrix_path.read_bytes()).hexdigest(),
+                            },
+                            {
+                                "id": "collection_status:therock",
+                                "path": "status.json",
+                                "schema": "schemas/collection-status.schema.json",
+                                "schema_version": 1,
+                                "sha256": hashlib.sha256(status_path.read_bytes()).hexdigest(),
+                            },
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            _loaded, state = ManagerService().load_catalog(catalog)
+
+            self.assertEqual(state.source_failure_count, 2)
+            self.assertEqual(
+                state.source_failures,
+                ("therock-github-workflows", "therock-releases"),
+            )
+
+    def test_stale_callback_cannot_commit_service_target(self):
+        window = MainWindow()
+        service = window.service
+        service.commit_target("new-target")
+        task = object()
+        window._tasks.add(task)
+        window._generation = 2
+
+        window._finish_task(
+            task,
+            "Detect",
+            service.commit_target,
+            "old-target",
+            generation=1,
+        )
+
+        self.assertEqual(service.target, "new-target")
+        window.close()
+
+    def test_stale_callback_cannot_commit_service_catalog(self):
+        window = MainWindow()
+        service = window.service
+        service.commit_catalog(({"id": "new"}, "new-state"))
+        task = object()
+        window._tasks.add(task)
+        window._generation = 2
+
+        window._finish_task(
+            task,
+            "Load Matrix catalog",
+            service.commit_catalog,
+            ({"id": "old"}, "old-state"),
+            generation=1,
+        )
+
+        self.assertEqual(service.catalog, {"id": "new"})
+        self.assertEqual(service.catalog_state, "new-state")
+        window.close()
+
+    def test_mutation_failure_is_visible_and_unlocks_after_generation_change(self):
+        window = MainWindow()
+        task = object()
+        window._tasks.add(task)
+        window._set_mutation_locked(True)
+        window._generation = 3
+
+        window._fail_task(
+            task,
+            "Apply core packages",
+            "subprocess failed",
+            generation=None,
+            mutation=True,
+        )
+
+        self.assertIn("ERROR: subprocess failed", window.output.toPlainText())
+        self.assertFalse(window._mutation_in_progress)
+        self.assertTrue(window.target_edit.isEnabled())
+        self.assertFalse(window.apply_core_button.isEnabled())
+        window.close()
+
+    def test_catalog_reload_immediately_clears_candidates_and_plans(self):
+        window = MainWindow()
+        window.service.catalog = {"old": True}
+        window._candidates = [{"id": "old"}]
+        window._candidate = {"id": "old"}
+        window._core_plan = object()
+        window._extension_plan_result = object()
+        window.apply_core_button.setEnabled(True)
+        window.apply_extension_button.setEnabled(True)
+
+        with patch.object(window, "_run") as run:
+            window._load_catalog(False)
+
+        self.assertIsNone(window.service.catalog)
+        self.assertEqual(window._candidates, [])
+        self.assertIsNone(window._candidate)
+        self.assertIsNone(window._core_plan)
+        self.assertIsNone(window._extension_plan_result)
+        self.assertFalse(window.apply_core_button.isEnabled())
+        self.assertFalse(window.apply_extension_button.isEnabled())
+        run.assert_called_once()
+        window.close()
 
     def test_extracts_unique_normalized_gfx_targets(self):
         observation = RuntimeObservation(

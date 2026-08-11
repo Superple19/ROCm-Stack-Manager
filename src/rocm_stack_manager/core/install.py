@@ -6,7 +6,14 @@ import subprocess
 import re
 from urllib.parse import unquote, urlparse
 
-from .backup import BackupError, BackupSnapshot, ExtensionBackupSnapshot, attach_wheelhouse, create_backup
+from .backup import (
+    BackupError,
+    BackupSnapshot,
+    ExtensionBackupSnapshot,
+    attach_wheelhouse,
+    create_backup,
+    stage_backup_wheelhouse,
+)
 from .inventory import collect_inventory
 from .planning import InstallPlan, PlanningError, build_plan_binding, validate_plan_binding
 from .platforms import UnsupportedPlatformError, require_supported_host_platform
@@ -127,13 +134,17 @@ def build_install_plan(
     warnings = []
     resolver_status = candidate.get("resolver_status")
     if resolver_status == "resolver_failed":
-        warnings.append("resolver evidence is failed; this candidate requires explicit unverified approval")
+        warnings.append(
+            "recorded resolver evidence is failed; apply requires a fresh target-bound resolver preflight"
+        )
     elif resolver_status in {"not_collected", "unknown"}:
         warnings.append("resolver evidence is not available")
     if candidate.get("python_compatibility") == "unknown":
         warnings.append("Python ABI compatibility is unknown")
     if resolver_status == "resolver_failed" and not allow_unverified:
-        warnings.append("apply would require --allow-unverified")
+        warnings.append(
+            "apply will continue only if the fresh resolver preflight succeeds"
+        )
     if "torchaudio" not in _candidate_managed_packages(candidate):
         warnings.append("torchaudio is not included; audio workflows may be unavailable")
     warnings.extend(f"ComfyUI profile: {warning}" for warning in candidate.get("profile_warnings", ()))
@@ -197,6 +208,7 @@ def apply_install(
     resolver_result=None,
     resolver_runner=None,
     staging_runner=None,
+    backup_runner=None,
     staging_dir=None,
     **binding,
 ):
@@ -256,11 +268,24 @@ def apply_install(
         raise InstallationError(str(error)) from error
     if backup is None:
         backup = create_backup(target, backup_dir)
-    if backup.path.is_file():
-        try:
-            backup = attach_wheelhouse(backup, staged)
-        except (BackupError, OSError, ValueError) as error:
-            raise InstallationError(f"cannot preserve staged artifacts in backup: {error}") from error
+    if not backup.path.is_file():
+        raise InstallationError(f"package backup is missing: {backup.path}")
+    archived = None
+    try:
+        archived = stage_backup_wheelhouse(
+            target,
+            backup,
+            timeout=min(timeout, 1800),
+            runner=backup_runner or subprocess.run,
+        )
+        backup = attach_wheelhouse(backup, archived)
+    except (BackupError, OSError, ValueError) as error:
+        raise InstallationError(f"cannot archive the pre-change environment: {error}") from error
+    finally:
+        if archived is not None:
+            import shutil
+
+            shutil.rmtree(archived.root, ignore_errors=True)
     staged_command = (
         str(target.python_executable),
         "-m",
@@ -356,6 +381,8 @@ def build_restore_plan(target, backup):
             )
     if not backup.requirements_path.is_file():
         raise InstallationError(f"backup requirements file is missing: {backup.requirements_path}")
+    if backup.restore_mode not in {"offline_hash_verified", "network_version_pinned"}:
+        raise InstallationError(f"backup has an unsupported restore mode: {backup.restore_mode}")
     requirements_source = backup.wheelhouse_requirements_path or backup.requirements_path
     command = (
         str(target.python_executable),
@@ -388,7 +415,16 @@ def build_restore_plan(target, backup):
         command=command,
         warnings=(
             "restore reinstalls recorded versions but does not prune extra packages",
-            "restore uses hash-verified local artifacts" if backup.wheelhouse_path else "restore is version-pinned; package artifact bytes are not archived",
+            (
+                "restore uses hash-verified pre-change package artifacts"
+                if backup.wheelhouse_path
+                else "network restore explicitly allowed; package versions are pinned but artifact bytes are not archived"
+            ),
+            *(
+                (f"offline wheelhouse was rejected: {backup.wheelhouse_error}",)
+                if backup.wheelhouse_error
+                else ()
+            ),
         ),
     )
 

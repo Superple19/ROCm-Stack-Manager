@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from dataclasses import replace
+import hashlib
 import json
 from pathlib import Path
 from datetime import datetime, timezone
@@ -16,7 +17,7 @@ from ..core.adapter import (
     PythonPackageAdapter,
 )
 from ..core.backup import load_backup, load_extension_backup
-from ..core.catalog import ensure_catalog, iter_candidates, load_catalog
+from ..core.catalog import CatalogError, ensure_catalog, iter_candidates, load_catalog
 from ..core.detection import TargetLayout
 from ..core.hardware import detected_gfx_targets, hardware_from_devices, probe_hardware
 from ..core.extension_resolver import run_extension_resolver
@@ -40,11 +41,13 @@ class CatalogState:
     path: Path
     source: str
     refreshed: bool
+    catalog_sha256: str
     fetched_at: str | None = None
-    catalog_sha256: str | None = None
     artifact_count: int | None = None
     cache_age_seconds: float | None = None
-    source_failure_count: int = 0
+    source_failure_count: int | None = None
+    source_failures: tuple[str, ...] = ()
+    timestamp_source: str = "unknown"
 
 
 class ManagerService:
@@ -63,24 +66,49 @@ class ManagerService:
         self.target = None
 
     def detect(self, path):
-        self.target = self.adapter.detect(path)
-        return self.target
+        return self.adapter.detect(path)
+
+    def commit_target(self, target):
+        self.target = target
+        return target
+
+    def clear_target(self):
+        self.target = None
 
     def load_catalog(self, path=None, *, base_url=None, refresh=False):
         catalog_path = ensure_catalog(path, base_url=base_url, refresh=refresh)
-        self.catalog = load_catalog(catalog_path)
+        catalog = load_catalog(catalog_path)
+        catalog_bytes = catalog_path.read_bytes()
+        catalog_sha256 = hashlib.sha256(catalog_bytes).hexdigest()
+        try:
+            catalog_index = json.loads(catalog_bytes.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise CatalogError(f"invalid JSON catalog: {catalog_path}") from error
         source = base_url or ("local file" if path is not None else "official Matrix source")
         manifest = {}
-        manifest_paths = [catalog_path.parent / "source-manifest.json"]
-        if catalog_path.parent.name == "data":
-            manifest_paths.insert(0, catalog_path.parent.parent / "source-manifest.json")
+        manifest_paths = []
+        is_catalog_index = isinstance(catalog_index.get("artifacts"), list)
+        if is_catalog_index:
+            manifest_paths.append(catalog_path.parent / "source-manifest.json")
+            if catalog_path.parent.name == "data":
+                manifest_paths.insert(
+                    0, catalog_path.parent.parent / "source-manifest.json"
+                )
         for manifest_path in manifest_paths:
             try:
                 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
                 continue
             break
-        fetched_at = manifest.get("fetched_at")
+        manifest_hash = manifest.get("catalog_sha256")
+        if manifest_hash is not None and manifest_hash != catalog_sha256:
+            raise CatalogError(
+                f"catalog hash does not match source manifest: {catalog_path}"
+            )
+        fetched_at = manifest.get("fetched_at") or catalog.get("_catalog_generated_at")
+        timestamp_source = "fetched_at" if manifest.get("fetched_at") else (
+            "generated_at" if fetched_at else "unknown"
+        )
         age = None
         if isinstance(fetched_at, str):
             try:
@@ -88,19 +116,43 @@ class ManagerService:
                 age = max(0.0, (datetime.now(timezone.utc) - observed).total_seconds())
             except ValueError:
                 age = None
-        failures = manifest.get("failures") or manifest.get("errors") or ()
-        failure_count = len(failures) if isinstance(failures, list) else 0
-        self.catalog_state = CatalogState(
+        statuses = catalog.get("_collection_statuses")
+        source_failures = []
+        if isinstance(statuses, dict):
+            for status in statuses.values():
+                for result in status.get("results", ()) if isinstance(status, dict) else ():
+                    if isinstance(result, dict) and result.get("status") == "failed":
+                        source_failures.append(str(result.get("source_id") or "unknown"))
+            failure_count = len(source_failures)
+        else:
+            failure_count = None
+        state = CatalogState(
             path=catalog_path,
             source=source,
             refreshed=refresh,
+            catalog_sha256=catalog_sha256,
             fetched_at=fetched_at,
-            catalog_sha256=manifest.get("catalog_sha256"),
-            artifact_count=manifest.get("artifact_count"),
+            artifact_count=(
+                manifest.get("artifact_count")
+                if manifest.get("artifact_count") is not None
+                else len(catalog_index.get("artifacts", ()))
+                if isinstance(catalog_index.get("artifacts"), list)
+                else None
+            ),
             cache_age_seconds=age,
             source_failure_count=failure_count,
+            source_failures=tuple(sorted(source_failures)),
+            timestamp_source=timestamp_source,
         )
-        return self.catalog, self.catalog_state
+        return catalog, state
+
+    def commit_catalog(self, result):
+        self.catalog, self.catalog_state = result
+        return result
+
+    def clear_catalog(self):
+        self.catalog = None
+        self.catalog_state = None
 
     def candidates(
         self,
@@ -209,9 +261,15 @@ class ManagerService:
             target_gfx=candidate.get("gfx"),
         )
 
-    def restore_core(self, backup_path, *, apply=False):
+    def restore_core(
+        self, backup_path, *, apply=False, allow_network_restore=False
+    ):
         self._require_target()
-        backup = load_backup(backup_path, materialize=apply)
+        backup = load_backup(
+            backup_path,
+            materialize=apply,
+            allow_network_restore=allow_network_restore,
+        )
         if apply:
             return apply_restore(self.target, backup)
         return InstallResult(plan=build_restore_plan(self.target, backup))

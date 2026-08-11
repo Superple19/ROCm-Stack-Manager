@@ -6,6 +6,7 @@ from pathlib import Path
 from PySide6 import QtCore, QtWidgets
 
 from ..adapters.registry import available_adapters
+from ..core.backup import BackupError, load_backup
 from ..core.platforms import SUPPORTED_PLATFORMS, host_platform
 from .models import CandidateTableModel
 from .services import ManagerService, detected_gfx_targets
@@ -26,11 +27,21 @@ class MainWindow(QtWidgets.QMainWindow):
         self._restore_plan = None
         self._restore_path = None
         self._restore_kind = None
+        self._restore_network_allowed = False
+        self._mutation_in_progress = False
         self._build_ui()
         if hasattr(self.service, "host_hardware"):
             QtCore.QTimer.singleShot(0, self._probe_host_hardware)
 
     def closeEvent(self, event):
+        if self._mutation_in_progress:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Operation in progress",
+                "Wait for the package operation to finish before closing the manager.",
+            )
+            event.ignore()
+            return
         self._generation += 1
         for task in self._tasks:
             task.signals.blockSignals(True)
@@ -55,16 +66,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self.adapter_combo.currentTextChanged.connect(self._adapter_changed)
         self.target_edit = QtWidgets.QLineEdit()
         self.target_edit.setPlaceholderText("Select a ComfyUI portable, venv, or source directory")
-        browse = QtWidgets.QPushButton("Browse…")
-        detect = QtWidgets.QPushButton("Detect")
-        browse.clicked.connect(self._browse_target)
-        detect.clicked.connect(self._detect)
+        self.target_browse_button = QtWidgets.QPushButton("Browse…")
+        self.detect_button = QtWidgets.QPushButton("Detect")
+        self.target_browse_button.clicked.connect(self._browse_target)
+        self.detect_button.clicked.connect(self._detect)
         target_layout.addWidget(QtWidgets.QLabel("Adapter"), 0, 0)
         target_layout.addWidget(self.adapter_combo, 0, 1)
         target_layout.addWidget(QtWidgets.QLabel("Path"), 1, 0)
         target_layout.addWidget(self.target_edit, 1, 1, 1, 2)
-        target_layout.addWidget(browse, 1, 3)
-        target_layout.addWidget(detect, 1, 4)
+        target_layout.addWidget(self.target_browse_button, 1, 3)
+        target_layout.addWidget(self.detect_button, 1, 4)
         self.target_summary = QtWidgets.QLabel("No target detected")
         self.target_summary.setWordWrap(True)
         target_layout.addWidget(self.target_summary, 2, 0, 1, 5)
@@ -74,17 +85,17 @@ class MainWindow(QtWidgets.QMainWindow):
         catalog_layout = QtWidgets.QGridLayout(catalog_group)
         self.catalog_edit = QtWidgets.QLineEdit()
         self.catalog_edit.setPlaceholderText("Optional local catalog.json or matrix.json")
-        catalog_browse = QtWidgets.QPushButton("Browse…")
-        load_catalog = QtWidgets.QPushButton("Load")
-        refresh_catalog = QtWidgets.QPushButton("Refresh official")
-        catalog_browse.clicked.connect(self._browse_catalog)
-        load_catalog.clicked.connect(lambda: self._load_catalog(False))
-        refresh_catalog.clicked.connect(lambda: self._load_catalog(True))
+        self.catalog_browse_button = QtWidgets.QPushButton("Browse…")
+        self.load_catalog_button = QtWidgets.QPushButton("Load")
+        self.refresh_catalog_button = QtWidgets.QPushButton("Refresh official")
+        self.catalog_browse_button.clicked.connect(self._browse_catalog)
+        self.load_catalog_button.clicked.connect(lambda: self._load_catalog(False))
+        self.refresh_catalog_button.clicked.connect(lambda: self._load_catalog(True))
         catalog_layout.addWidget(QtWidgets.QLabel("Path"), 0, 0)
         catalog_layout.addWidget(self.catalog_edit, 0, 1)
-        catalog_layout.addWidget(catalog_browse, 0, 2)
-        catalog_layout.addWidget(load_catalog, 0, 3)
-        catalog_layout.addWidget(refresh_catalog, 0, 4)
+        catalog_layout.addWidget(self.catalog_browse_button, 0, 2)
+        catalog_layout.addWidget(self.load_catalog_button, 0, 3)
+        catalog_layout.addWidget(self.refresh_catalog_button, 0, 4)
         self.catalog_summary = QtWidgets.QLabel("No catalog loaded")
         catalog_layout.addWidget(self.catalog_summary, 1, 0, 1, 5)
         root.addWidget(catalog_group)
@@ -117,8 +128,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.kind_combo = QtWidgets.QComboBox()
         self.kind_combo.addItems(("all", "installable", "artifact_only", "unavailable"))
         self.candidate_summary = QtWidgets.QLabel("No candidates loaded")
-        find = QtWidgets.QPushButton("Find candidates")
-        find.clicked.connect(self._find_candidates)
+        self.find_button = QtWidgets.QPushButton("Find candidates")
+        self.find_button.clicked.connect(self._find_candidates)
         filter_layout.addWidget(QtWidgets.QLabel("Platform"), 0, 0)
         filter_layout.addWidget(self.platform_combo, 0, 1)
         filter_layout.addWidget(QtWidgets.QLabel("GFX"), 0, 2)
@@ -128,7 +139,7 @@ class MainWindow(QtWidgets.QMainWindow):
         filter_layout.addWidget(self.channel_combo, 0, 6)
         filter_layout.addWidget(QtWidgets.QLabel("ROCm"), 0, 7)
         filter_layout.addWidget(self.rocm_edit, 0, 8)
-        filter_layout.addWidget(find, 0, 9)
+        filter_layout.addWidget(self.find_button, 0, 9)
         filter_layout.addWidget(QtWidgets.QLabel("Family"), 1, 0)
         filter_layout.addWidget(self.family_combo, 1, 1)
         filter_layout.addWidget(QtWidgets.QLabel("Lifecycle"), 1, 2)
@@ -212,17 +223,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def _adapter_changed(self, adapter_name):
         self._bump_generation()
         self.service.set_adapter(adapter_name)
-        self.target_summary.setText("No target detected")
-        self._candidates = []
-        self._candidate = None
-        self._clear_plan_state()
-        self.candidate_model.set_rows(())
-        self.candidate_summary.setText("No candidates loaded")
+        self._reset_target_state()
         self.extension_summary.setText("Extension inventory is unavailable for this adapter")
         self.extension_table.setRowCount(0)
-        self.verify_button.setEnabled(False)
-        self.restore_button.setEnabled(False)
-        self._update_candidate_actions()
 
     def _browse_catalog(self):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
@@ -238,24 +241,40 @@ class MainWindow(QtWidgets.QMainWindow):
         self._generation += 1
         return self._generation
 
-    def _run(self, label, function, callback):
-        generation = self._generation
+    def _run(self, label, function, callback, *, mutation=False):
+        generation = None if mutation else self._generation
+        if mutation:
+            self._set_mutation_locked(True)
         self.statusBar().showMessage(f"{label}…")
         task = Task(function)
         self._tasks.add(task)
         task.signals.finished.connect(
-            lambda result: self._finish_task(task, label, callback, result, generation)
+            lambda result: self._finish_task(
+                task, label, callback, result, generation, mutation
+            )
         )
-        task.signals.failed.connect(lambda error: self._fail_task(task, label, error, generation))
+        task.signals.failed.connect(
+            lambda error: self._fail_task(
+                task, label, error, generation, mutation
+            )
+        )
         self.thread_pool.start(task)
 
-    def _finish_task(self, task, label, callback, result, generation=None):
+    def _finish_task(
+        self, task, label, callback, result, generation=None, mutation=False
+    ):
         self._tasks.discard(task)
         if generation is not None and generation != self._generation:
             self.statusBar().showMessage(f"{label} result discarded (target changed)")
             return
-        self.statusBar().showMessage(f"{label} {'failed' if self._result_failed(result) else 'complete'}")
-        callback(result)
+        try:
+            self.statusBar().showMessage(
+                f"{label} {'failed' if self._result_failed(result) else 'complete'}"
+            )
+            callback(result)
+        finally:
+            if mutation:
+                self._set_mutation_locked(False)
 
     @staticmethod
     def _result_failed(result):
@@ -279,18 +298,56 @@ class MainWindow(QtWidgets.QMainWindow):
                 return True
         return False
 
-    def _fail_task(self, task, label, error, generation=None):
+    def _fail_task(self, task, label, error, generation=None, mutation=False):
         self._tasks.discard(task)
         if generation is not None and generation != self._generation:
             self.statusBar().showMessage(f"{label} error discarded (target changed)")
             return
-        self.statusBar().showMessage(f"{label} failed")
-        self._show_error(error)
+        try:
+            self.statusBar().showMessage(f"{label} failed")
+            self._show_error(error)
+        finally:
+            if mutation:
+                self._set_mutation_locked(False)
+
+    def _set_mutation_locked(self, locked):
+        self._mutation_in_progress = locked
+        for widget in (
+            self.adapter_combo,
+            self.target_edit,
+            self.target_browse_button,
+            self.detect_button,
+            self.catalog_edit,
+            self.catalog_browse_button,
+            self.load_catalog_button,
+            self.refresh_catalog_button,
+            self.find_button,
+            self.restore_button,
+        ):
+            widget.setEnabled(not locked)
+        if locked:
+            self.apply_core_button.setEnabled(False)
+            self.apply_extension_button.setEnabled(False)
+            self.apply_restore_button.setEnabled(False)
+        else:
+            self.verify_button.setEnabled(self.service.target is not None)
+            self.restore_button.setEnabled(self.service.target is not None)
+            self._update_candidate_actions()
 
     def _detect(self):
         self._bump_generation()
         path = self.target_edit.text().strip() or "."
-        self._run("Detect", lambda: self.service.detect(path), self._display_target_and_probe)
+        self.service.clear_target()
+        self._reset_target_state("Detecting target…")
+        self._run(
+            "Detect",
+            lambda: self.service.detect(path),
+            self._commit_and_display_target,
+        )
+
+    def _commit_and_display_target(self, target):
+        self.service.commit_target(target)
+        self._display_target_and_probe(target)
 
     def _display_target_and_probe(self, target):
         self._display_target(target)
@@ -303,7 +360,6 @@ class MainWindow(QtWidgets.QMainWindow):
             )
 
     def _display_target(self, target):
-        self._bump_generation()
         self._candidates = []
         self._candidate = None
         self._clear_plan_state()
@@ -316,6 +372,22 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self.verify_button.setEnabled(True)
         self.restore_button.setEnabled(True)
+        self._update_candidate_actions()
+
+    def _reset_target_state(self, summary="No target detected"):
+        self._candidates = []
+        self._candidate = None
+        self._clear_plan_state()
+        self._restore_plan = None
+        self._restore_path = None
+        self._restore_kind = None
+        self._restore_network_allowed = False
+        self.apply_restore_button.setEnabled(False)
+        self.candidate_model.set_rows(())
+        self.candidate_summary.setText("No candidates loaded")
+        self.target_summary.setText(summary)
+        self.verify_button.setEnabled(False)
+        self.restore_button.setEnabled(False)
         self._update_candidate_actions()
 
     def _probe_host_hardware(self):
@@ -378,12 +450,23 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _load_catalog(self, refresh):
         self._bump_generation()
+        self.service.clear_catalog()
+        self._candidates = []
+        self._candidate = None
+        self._clear_plan_state()
+        self.candidate_model.set_rows(())
+        self.candidate_summary.setText("No candidates loaded")
+        self.catalog_summary.setText("Loading Matrix catalog…")
         path = None if refresh else (self.catalog_edit.text().strip() or None)
         self._run(
             "Load Matrix catalog",
             lambda: self.service.load_catalog(path, refresh=refresh),
-            self._display_catalog,
+            self._commit_and_display_catalog,
         )
+
+    def _commit_and_display_catalog(self, result):
+        self.service.commit_catalog(result)
+        self._display_catalog(result)
 
     def _display_catalog(self, result):
         _, state = result
@@ -392,11 +475,16 @@ class MainWindow(QtWidgets.QMainWindow):
         age = "unknown"
         if state.cache_age_seconds is not None:
             age = f"{state.cache_age_seconds / 86400:.1f} days"
-        failures = state.source_failure_count
+        failures = (
+            state.source_failure_count
+            if state.source_failure_count is not None
+            else "unknown"
+        )
+        failure_ids = ", ".join(state.source_failures) or "none"
         self.catalog_summary.setText(
             f"Loaded: {state.path} | Source: {state.source} | "
             f"Fetched: {fetched} ({age} old) | Artifacts: {artifacts} | "
-            f"Source failures: {failures} | "
+            f"Source failures: {failures} ({failure_ids}) | "
             f"Refresh requested: {'yes' if state.refreshed else 'no'}"
         )
         self._append_json(
@@ -408,6 +496,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 "artifact_count": state.artifact_count,
                 "cache_age_seconds": state.cache_age_seconds,
                 "source_failure_count": state.source_failure_count,
+                "source_failures": list(state.source_failures),
+                "timestamp_source": state.timestamp_source,
             }
         )
         if self.service.target is not None and getattr(self.service, "extension_capable", lambda: False)():
@@ -613,6 +703,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 allow_unverified=self.allow_unverified.isChecked(),
             ),
             self._display_apply_result,
+            mutation=True,
         )
 
     def _apply_extensions(self):
@@ -634,6 +725,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "Apply extensions",
             lambda: self.service.apply_extensions(self._extension_plan_result),
             self._display_apply_result,
+            mutation=True,
         )
 
     def _display_apply_result(self, result):
@@ -657,12 +749,34 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self._restore_path = Path(path)
         self._restore_kind = "extensions" if document.get("kind") == "extensions" else "core"
+        self._restore_network_allowed = False
         if self._restore_kind == "extensions":
             def function():
                 return self.service.restore_extensions(path)
         else:
+            try:
+                load_backup(path, materialize=False)
+            except BackupError as error:
+                if "--allow-network-restore" not in str(error):
+                    self._show_error(f"BackupError: {error}")
+                    return
+                answer = QtWidgets.QMessageBox.warning(
+                    self,
+                    "Offline restore unavailable",
+                    f"{error}\n\nBuild a version-pinned restore plan that may access the network?",
+                    QtWidgets.QMessageBox.StandardButton.Yes
+                    | QtWidgets.QMessageBox.StandardButton.No,
+                    QtWidgets.QMessageBox.StandardButton.No,
+                )
+                if answer != QtWidgets.QMessageBox.StandardButton.Yes:
+                    return
+                self._restore_network_allowed = True
+
             def function():
-                return self.service.restore_core(path)
+                return self.service.restore_core(
+                    path,
+                    allow_network_restore=self._restore_network_allowed,
+                )
         self._run("Build restore dry-run", function, self._display_restore_plan)
 
     def _display_restore_plan(self, result):
@@ -677,7 +791,13 @@ class MainWindow(QtWidgets.QMainWindow):
             self,
             "Confirm restore",
             f"Restore target package state from:\n{self._restore_path}\n\n"
-            "Extra packages will not be removed. Continue?",
+            "Extra packages will not be removed."
+            + (
+                " This restore explicitly allows network access."
+                if self._restore_network_allowed
+                else ""
+            )
+            + " Continue?",
             QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
             QtWidgets.QMessageBox.StandardButton.No,
         )
@@ -688,8 +808,17 @@ class MainWindow(QtWidgets.QMainWindow):
                 return self.service.restore_extensions(self._restore_path, apply=True)
         else:
             def function():
-                return self.service.restore_core(self._restore_path, apply=True)
-        self._run("Apply restore", function, self._display_restore_result)
+                return self.service.restore_core(
+                    self._restore_path,
+                    apply=True,
+                    allow_network_restore=self._restore_network_allowed,
+                )
+        self._run(
+            "Apply restore",
+            function,
+            self._display_restore_result,
+            mutation=True,
+        )
 
     def _display_restore_result(self, result):
         self.apply_restore_button.setEnabled(False)

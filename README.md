@@ -112,6 +112,12 @@ evidence remains explicitly marked as `unknown`.
 Candidate output distinguishes `installable` records, which have exact
 package specifications or direct wheel URLs, from `artifact_only` records,
 which preserve availability evidence but cannot produce an install command.
+TheRock installable package sets are derived from Matrix `package_history`,
+including its resolver evidence. A current-channel combination that has not
+yet appeared in package history remains `artifact_only` instead of being
+assembled from independently latest package versions. Every candidate reports
+`resolver_status`; `not_collected` and `resolver_failed` never imply runtime or
+hardware compatibility.
 The `candidates` command shows only `installable` records by default. Use
 `--candidate-kind artifact_only` or `--candidate-kind all` when reviewing
 provenance; artifact-only records remain rejected by plan and install commands.
@@ -139,6 +145,10 @@ Matrix checkout or set `ROCM_MATRIX_CATALOG_URL` to a trusted mirror.
 For the default GitHub source, the manager resolves `main` to a commit SHA
 before downloading the catalog so each cached snapshot uses an immutable raw
 revision; the resolved revision is recorded in the cache manifest.
+Every local or cached catalog is bound to plans by the SHA-256 of the selected
+catalog file. The UI also reads validated `collection_status:*` artifacts and
+shows failed source IDs; a snapshot without those artifacts reports the source
+failure state as unknown rather than zero.
 
 The `inventory` command reads installed distributions from the selected target
 Python and classifies them against one candidate. Compiled extensions without
@@ -176,23 +186,33 @@ packages.
 The `install` command emits a target-local pip command by default. It never
 executes pip unless `--apply` is explicitly provided. An apply first runs a
 fresh target-bound resolver preflight, stages exact artifacts into a local
-wheelhouse, and only then creates the package backup and changes the target.
-Failed or missing resolver evidence therefore blocks apply unless
-`--allow-unverified` is explicitly provided.
+wheelhouse, records the current environment, and downloads a separate
+hash-verified wheelhouse for that pre-change environment. No uninstall or
+install runs unless the pre-change archive is complete and its normalized
+package versions match the recorded requirements.
+A normal apply always runs a fresh target-bound resolver and proceeds only when
+that exact preflight succeeds. `--allow-unverified` is an explicit bypass of
+that fresh resolver gate; it does not promote catalog evidence.
 During an apply, stale managed ROCm and PyTorch packages are removed before
 the selected candidate is installed; unrelated application extensions remain.
 Plans warn when the selected package set does not include `torchaudio`; this is
 safe for image-only ComfyUI use but may affect audio workflows.
 The `restore` command (also available as `rollback`) accepts a current backup
 JSON path and is dry-run by default. Backups created by an apply include a
-target-local wheelhouse and SHA-256 manifest; restore uses `--no-index`,
+target-local pre-change wheelhouse and SHA-256 manifest; restore uses `--no-index`,
 `--find-links`, and `--require-hashes` against those local artifacts. Older
-backups without a wheelhouse remain version-pinned and are labelled as such.
+core v1 backups are accepted only when their wheelhouse matches the recorded
+requirements. A missing, damaged, or mismatched v1 wheelhouse is rejected by
+default; `--allow-network-restore` explicitly opts into a version-pinned
+network restore using the original requirements sidecar after its SHA-256 and
+content have been validated.
 Restore does not remove extra packages. The backup schema, requirements
-sidecar, wheelhouse manifest, and hashes are validated before a plan is
+sidecar, wheelhouse role, package-version equivalence, manifest, and hashes are validated before a plan is
 produced. A dry-run never creates or repairs backup files. Backups created
-before the current schema must first be converted with `migrate-backup`, which
-never overwrites the source.
+without a hashed requirements sidecar must first be converted with
+`migrate-backup`, which never overwrites the source. Hash verification applies
+to archived package bytes; restore does not claim byte-identical Python state
+because extra packages are not pruned.
 The `verify` command executes only the selected target's Python interpreter. It
 does not call a globally installed ROCm executable; host GPU state is reported
 separately from target-local Torch, HIP, and ROCm package metadata.
@@ -211,6 +231,10 @@ silently collapsed into one row per channel. Core package apply and
 package/extension restore require a completed dry-run,
 target-local backup, and explicit confirmation. Extension apply remains
 disabled unless every selected extension has exact Matrix source and evidence.
+Target and catalog workers prepare results without mutating shared state; only
+the latest generation is committed. Changing either context invalidates all
+candidate and restore plans. Target/catalog controls are locked while an apply
+or restore runs, and operation failures remain visible.
 After target detection, the UI also runs a local ComfyUI extension inventory
 without network access. Installed extensions are shown separately from Matrix
 claim status; an installed extension with missing ABI evidence remains
@@ -248,7 +272,7 @@ rocm-stack-manager/
 │     │  ├─ comfyui/
 │     │  └─ ollama/
 │     ├─ cli.py
-│     └─ gui/
+│     └─ ui/
 ├─ tests/
 ├─ docs/
 ├─ LICENSE

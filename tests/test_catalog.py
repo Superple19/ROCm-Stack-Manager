@@ -17,7 +17,7 @@ from rocm_stack_manager.core.detection import detect_target
 from rocm_stack_manager.core.planning import PlanningError, build_plan
 
 
-def _matrix():
+def _matrix(*, include_history=True):
     matrix = {
         "schema_version": 1,
         "generated_at": "2026-08-08T00:00:00Z",
@@ -60,6 +60,13 @@ def _matrix():
         "amd-torchvision-device-gfx1201": "0.27.0+rocm7.14.0",
         "torchaudio": "2.12.0+rocm7.14.0",
     }
+    matrix["sources"] = {
+        "packages-stable": {
+            "url": "https://repo.example.test/rocm/",
+            "platform": "windows",
+            "channel": "stable",
+        }
+    }
     matrix["_package_snapshots"] = {
         "package_snapshots:stable": {
             "packages": {
@@ -68,6 +75,26 @@ def _matrix():
             }
         }
     }
+    matrix["_historical_candidates"] = []
+    if include_history:
+        matrix["_historical_candidates"].append(
+            {
+                "id": "therock:stable:7.14.0:2.12.0:cp312",
+                "distribution_family": "therock",
+                "platform": "windows",
+                "channel": "stable",
+                "rocm_version": "7.14.0",
+                "torch_version": "2.12.0+rocm7.14.0",
+                "torchvision_version": "0.27.0+rocm7.14.0",
+                "torchaudio_version": "2.12.0+rocm7.14.0",
+                "python_tags": ["cp312"],
+                "available_gfx_targets": ["gfx1201"],
+                "artifact_available": True,
+                "lifecycle": "current",
+                "source_id": "packages-stable",
+                "evidence_status": {"resolver": "resolver_failed"},
+            }
+        )
     return matrix
 
 
@@ -323,23 +350,91 @@ class CatalogTests(unittest.TestCase):
                 load_catalog(catalog_path)
 
     def test_filters_available_candidates(self):
-        candidates = iter_candidates(_matrix(), platform="windows", gfx="gfx1201")
+        candidates = iter_candidates(
+            _matrix(), platform="windows", gfx="gfx1201", python_tag="cp312"
+        )
 
         self.assertEqual(len(candidates), 1)
         self.assertEqual(candidates[0]["channel"], "stable")
-        self.assertTrue(candidates[0]["id"].startswith("therock:windows:stable:gfx1201:"))
+        self.assertEqual(candidates[0]["id"], "therock:stable:7.14.0:2.12.0:cp312")
         self.assertEqual(candidates[0]["candidate_kind"], "installable")
+        self.assertEqual(candidates[0]["resolver_status"], "resolver_failed")
+        self.assertEqual(candidates[0]["index_url"], "https://repo.example.test/rocm/")
+        self.assertIn("rocm-sdk-device-gfx1201==7.14.0", candidates[0]["package_specs"])
 
     def test_candidate_identity_includes_torchvision(self):
-        first = iter_candidates(_matrix(), platform="windows", gfx="gfx1201")[0]
+        first_catalog = _matrix()
+        first = iter_candidates(first_catalog, platform="windows", gfx="gfx1201")[0]
         changed = _matrix()
-        changed["targets"][0]["platforms"]["windows"]["package_channels"]["stable"][
-            "torchvision_device_version"
-        ] = "0.28.0+rocm7.14.0"
+        changed["_historical_candidates"][0]["torchvision_version"] = "0.28.0+rocm7.14.0"
+        changed["_historical_candidates"][0]["id"] = "therock:stable:7.14.0:2.12.0:vision-0.28:cp312"
         second = iter_candidates(changed, platform="windows", gfx="gfx1201")[0]
 
         self.assertNotEqual(first["id"], second["id"])
         self.assertNotEqual(first["candidate_hash"], second["candidate_hash"])
+
+    def test_current_channel_without_history_is_artifact_only(self):
+        candidate = iter_candidates(
+            _matrix(include_history=False),
+            platform="windows",
+            gfx="gfx1201",
+            python_tag="cp312",
+        )[0]
+
+        self.assertEqual(candidate["candidate_kind"], "artifact_only")
+        self.assertEqual(candidate["resolver_status"], "not_collected")
+
+    def test_history_without_bound_python_tag_is_artifact_only(self):
+        candidate = iter_candidates(
+            _matrix(),
+            platform="windows",
+            gfx="gfx1201",
+        )[0]
+
+        self.assertEqual(candidate["candidate_kind"], "artifact_only")
+
+    def test_legacy_history_does_not_suppress_therock_observation(self):
+        catalog = _matrix(include_history=False)
+        catalog["_historical_candidates"] = [
+            {
+                "id": "legacy:same-package-set",
+                "distribution_family": "legacy",
+                "platform": "windows",
+                "channel": "stable",
+                "rocm_version": "7.14.0",
+                "torch_version": "2.12.0+rocm7.14.0",
+                "torchvision_version": "0.27.0+rocm7.14.0",
+                "torchaudio_version": "2.12.0+rocm7.14.0",
+                "python_tags": ["cp312"],
+                "available_gfx_targets": ["gfx1201"],
+                "artifact_available": True,
+                "wheel_urls": ["https://example.test/torch.whl"],
+            }
+        ]
+
+        candidates = iter_candidates(
+            catalog,
+            platform="windows",
+            gfx="gfx1201",
+            python_tag="cp312",
+        )
+
+        self.assertEqual(
+            {candidate["distribution_family"] for candidate in candidates},
+            {"legacy", "therock"},
+        )
+
+    def test_matching_history_suppresses_synthetic_duplicate(self):
+        candidates = iter_candidates(
+            _matrix(),
+            platform="windows",
+            gfx="gfx1201",
+            python_tag="cp312",
+            candidate_kind=None,
+        )
+
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]["id"], "therock:stable:7.14.0:2.12.0:cp312")
 
     def test_malformed_platform_record_is_rejected(self):
         matrix = _matrix()
@@ -489,7 +584,7 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(visible_incompatible[0]["python_compatibility"], "incompatible")
 
     def test_rejects_package_version_mismatch_even_when_tags_match(self):
-        catalog = _matrix()
+        catalog = _matrix(include_history=False)
         catalog["_package_snapshots"]["package_snapshots:stable"]["packages"]["torch"][0]["version"] = "2.13.0+rocm7.14.0"
 
         visible = iter_candidates(
@@ -504,7 +599,7 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(iter_candidates(catalog, platform="windows", gfx="gfx1201", python_tag="cp312"), [])
 
     def test_rejects_missing_package_map(self):
-        catalog = _matrix()
+        catalog = _matrix(include_history=False)
         del catalog["_package_snapshots"]["package_snapshots:stable"]["packages"]["torchaudio"]
 
         visible = iter_candidates(
@@ -518,7 +613,7 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(visible[0]["python_compatibility"], "incompatible")
 
     def test_rejects_versionless_artifact(self):
-        catalog = _matrix()
+        catalog = _matrix(include_history=False)
         catalog["_package_snapshots"]["package_snapshots:stable"]["packages"]["torch"][0]["version"] = None
 
         visible = iter_candidates(
