@@ -1,6 +1,7 @@
 """Command-line entry point for ROCM Stack Manager."""
 
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -626,7 +627,14 @@ def main(argv=None):
                 if result.output:
                     print(result.output.rstrip())
             return _operation_exit_code(result)
-        plan = adapter.plan(target, candidate)
+        catalog_hash = hashlib.sha256(catalog_path.read_bytes()).hexdigest()
+        plan = adapter.plan(
+            target,
+            candidate,
+            catalog_hash=catalog_hash,
+            adapter_id=adapter.id,
+            target_gfx=candidate.get("gfx"),
+        )
         if args.json_output:
             print(json.dumps(plan.as_dict(), indent=2, sort_keys=True))
         else:

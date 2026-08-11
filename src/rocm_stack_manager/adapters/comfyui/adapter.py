@@ -29,12 +29,12 @@ class ComfyUIAdapter:
     def inventory(self, target, candidate=None):
         return collect_inventory(target, candidate)
 
-    def plan(self, target, candidate, selections=()):
+    def plan(self, target, candidate, selections=(), **binding):
         if selections:
             raise CapabilityUnavailable(
                 "ComfyUI core plans do not accept extensions; use extensions plan"
             )
-        return build_install_plan(target, candidate)
+        return build_install_plan(target, candidate, **binding)
 
     def verify(self, target):
         return probe_target(target)

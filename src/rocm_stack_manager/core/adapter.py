@@ -33,6 +33,7 @@ class RuntimeAdapter(Protocol):
         target: Any,
         candidate: dict,
         selections: tuple[str, ...] = (),
+        **binding: Any,
     ) -> Any:
         ...
 
