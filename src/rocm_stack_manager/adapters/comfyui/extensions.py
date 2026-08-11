@@ -420,15 +420,19 @@ def _extension_plan_record(profile, document, candidate, installed, extension_ca
     }:
         status = "blocked"
         reasons.append(f"Matrix claim status is {claim_status}")
+    elif catalog["target_match"] != "matched":
+        status = "blocked"
+        reasons.append(f"Matrix artifact target match is {catalog['target_match']}")
+    elif not catalog["evidence_refs"]:
+        status = "blocked"
+        reasons.append("Matrix artifact has no evidence reference")
     elif not evidence_refs:
         status = "blocked"
         reasons.append("profile has no evidence references")
-    elif not sources:
+    elif not catalog["matching_sources"]:
         status = "blocked"
-        reasons.append("profile has no exact wheel URL or package specification")
+        reasons.append("Matrix artifact has no exact wheel URL or package specification")
     else:
-        if catalog["target_match"] in {"incompatible", "unknown"}:
-            reasons.append(f"Matrix artifact target match is {catalog['target_match']}")
         reasons.extend(catalog["dependency_mismatches"])
         reasons.extend(constraint_mismatches)
         status = "blocked" if reasons else "installable"

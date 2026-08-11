@@ -165,6 +165,7 @@ class ExtensionReportTests(unittest.TestCase):
             "platform": "windows",
             "gfx": "gfx1201",
             "python_tag": "cp312",
+            "abi_tags": ["cp312"],
             "torch_version": "2.14.0",
             "rocm_version": "10.1.0",
         }
@@ -253,6 +254,7 @@ class ExtensionReportTests(unittest.TestCase):
             "platform": "windows",
             "gfx": "gfx1201",
             "python_tag": "cp312",
+            "abi_tags": ["cp312"],
             "torch_version": "2.14.0",
             "rocm_version": "10.1.0",
         }
@@ -316,6 +318,7 @@ class ExtensionReportTests(unittest.TestCase):
             "platform": "windows",
             "gfx": "gfx1201",
             "python_tag": "cp312",
+            "abi_tags": ["cp312"],
             "torch_version": "2.14.0",
             "rocm_version": "10.1.0",
         }
@@ -341,6 +344,35 @@ class ExtensionReportTests(unittest.TestCase):
                 }
             ],
         }
+        extension_catalog = {
+            "extensions": [
+                {
+                    "id": "extension:bitsandbytes:0.46.1",
+                    "extension": "bitsandbytes",
+                    "package_name": "bitsandbytes",
+                    "version": "0.46.1",
+                    "platform": "windows",
+                    "python_tags": ["cp312"],
+                    "platform_tags": ["win_amd64"],
+                    "abi_tags": ["cp312"],
+                    "artifacts": [
+                        {
+                            "candidate_id": "extension-candidate",
+                            "python_tag": "cp312",
+                            "abi_tag": "cp312",
+                            "platform_tag": "win_amd64",
+                            "url": "https://example.test/bitsandbytes.whl",
+                        }
+                    ],
+                    "artifact_urls": ["https://example.test/bitsandbytes.whl"],
+                    "source_id": "packages-test",
+                    "rocm_version": "10.1.0",
+                    "requires_dist": [],
+                    "gfx_targets": [],
+                    "evidence_status": "artifact_available",
+                }
+            ]
+        }
 
         plan = build_extension_plan(
             target,
@@ -348,11 +380,45 @@ class ExtensionReportTests(unittest.TestCase):
             candidate,
             {"bitsandbytes": profile},
             ("bitsandbytes",),
+            extension_catalog=extension_catalog,
         )
 
         self.assertEqual(plan.extensions[0]["status"], "installable")
         self.assertEqual(plan.commands[0]["extension_id"], "bitsandbytes")
         self.assertIn("https://example.test/bitsandbytes.whl", plan.commands[0]["command"])
+
+    def test_profile_source_without_catalog_artifact_is_blocked(self):
+        target = type("Target", (), {"root": Path("C:/target"), "python_executable": Path("C:/target/python.exe")})()
+        inventory = PackageInventory(Path("C:/target"), target.python_executable, (), "detected")
+        candidate = {
+            "id": "candidate",
+            "artifact_available": True,
+            "candidate_kind": "installable",
+            "platform": "windows",
+            "gfx": "gfx1201",
+            "python_tag": "cp312",
+            "torch_version": "2.14.0",
+            "rocm_version": "10.1.0",
+        }
+        profile = {
+            "id": "comfyui.bitsandbytes",
+            "metadata": {"status": "artifact_available"},
+            "evidence_refs": ["artifact:profile-only"],
+            "constraints": [
+                {
+                    "kind": "extension",
+                    "claim_status": "artifact_available",
+                    "value": {
+                        "install_sources": ["https://example.test/bitsandbytes.whl"],
+                        "supported_os": ["windows"],
+                        "python_tags": ["cp312"],
+                    },
+                }
+            ],
+        }
+        plan = build_extension_plan(target, inventory, candidate, {"bitsandbytes": profile}, ("bitsandbytes",))
+        self.assertEqual(plan.extensions[0]["status"], "blocked")
+        self.assertEqual(plan.commands, ())
 
     def test_extension_constraint_mismatch_blocks_install(self):
         target = type("Target", (), {"root": Path("C:/target"), "python_executable": Path("C:/target/python.exe")})()
