@@ -37,7 +37,7 @@ virtual-environment layout:
 ```powershell
 python -m rocm_stack_manager detect --target C:\path\to\comfyui-portable
 python -m rocm_stack_manager verify --target C:\path\to\comfyui-portable --json
-python -m rocm_stack_manager extensions `
+python -m rocm_stack_manager extensions report `
   --target C:\path\to\comfyui-portable
 python -m rocm_stack_manager extensions plan `
   --target C:\path\to\comfyui-portable `
@@ -113,6 +113,9 @@ for a trusted mirror or a local test server. The same source can be configured
 with `ROCM_MATRIX_CATALOG_URL`; when `--gfx` is omitted, a single GFX target
 reported by the selected target Python is used automatically. Multiple or
 undetected targets require an explicit `--gfx` value.
+Automatic catalog fetch requires the configured Matrix source to be reachable
+and publicly readable. Until that source is published, use `--catalog` with a
+local Matrix checkout or set `ROCM_MATRIX_CATALOG_URL` to a trusted mirror.
 
 The `inventory` command reads installed distributions from the selected target
 Python and classifies them against one candidate. Compiled extensions without
