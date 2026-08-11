@@ -133,6 +133,15 @@ def _validate_cached_bundle(catalog_path):
         digest = hashlib.sha256(artifact_path.read_bytes()).hexdigest()
         if digest != artifact["sha256"]:
             raise CatalogError(f"Matrix artifact hash mismatch: {artifact['id']}")
+        artifact_document = _read_json(artifact_path)
+        if not isinstance(artifact_document, dict):
+            raise CatalogError(f"Matrix artifact is not a JSON object: {artifact['id']}")
+        if artifact_document.get("schema_version") != artifact["schema_version"]:
+            raise CatalogError(f"Matrix artifact schema version mismatch: {artifact['id']}")
+        if artifact["id"].startswith("package_snapshots:") and not isinstance(artifact_document.get("packages"), dict):
+            raise CatalogError(f"Matrix package snapshot has no package map: {artifact['id']}")
+        if artifact["id"] == "extension_catalog" and not isinstance(artifact_document.get("extensions"), list):
+            raise CatalogError("Matrix extension catalog has no extension list")
     matrix_artifact = next((item for item in document["artifacts"] if item["id"] == "compatibility_matrix"), None)
     if matrix_artifact is None:
         raise CatalogError("catalog does not reference a compatibility matrix")

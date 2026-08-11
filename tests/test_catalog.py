@@ -248,6 +248,29 @@ class CatalogTests(unittest.TestCase):
 
             self.assertEqual(loaded["_extension_catalog"]["extensions"][0]["id"], "extension:one")
 
+    def test_rejects_malformed_package_snapshot_artifact(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "data").mkdir()
+            matrix_path = root / "data" / "matrix.json"
+            matrix_path.write_text(json.dumps(_matrix()), encoding="utf-8")
+            snapshot_path = root / "data" / "stable.json"
+            snapshot_path.write_text(json.dumps({"schema_version": 1}), encoding="utf-8")
+            catalog_path = root / "data" / "catalog.json"
+            catalog_path.write_text(
+                json.dumps({
+                    "schema_version": 1,
+                    "artifacts": [
+                        {"id": "compatibility_matrix", "path": "data/matrix.json", "schema": "schemas/compatibility-matrix.schema.json", "schema_version": 1, "sha256": hashlib.sha256(matrix_path.read_bytes()).hexdigest()},
+                        {"id": "package_snapshots:stable", "path": "data/stable.json", "schema": "schemas/package-snapshot.schema.json", "schema_version": 1, "sha256": hashlib.sha256(snapshot_path.read_bytes()).hexdigest()},
+                    ],
+                }),
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(CatalogError):
+                load_catalog(catalog_path)
+
     def test_filters_available_candidates(self):
         candidates = iter_candidates(_matrix(), platform="windows", gfx="gfx1201")
 
