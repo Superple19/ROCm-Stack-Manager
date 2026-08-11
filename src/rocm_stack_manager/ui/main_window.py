@@ -143,9 +143,9 @@ class MainWindow(QtWidgets.QMainWindow):
         extension_group = QtWidgets.QGroupBox("ComfyUI extension inventory")
         extension_layout = QtWidgets.QVBoxLayout(extension_group)
         self.extension_summary = QtWidgets.QLabel("No target extension inventory")
-        self.extension_table = QtWidgets.QTableWidget(0, 8)
+        self.extension_table = QtWidgets.QTableWidget(0, 10)
         self.extension_table.setHorizontalHeaderLabels(
-            ("Extension", "Status", "Installed", "Target match", "Latest artifact", "Matrix claim", "Evidence", "Reason")
+            ("Extension", "Status", "Installed", "Target match", "Latest artifact", "Artifact platform", "Python/ABI", "Matrix claim", "Evidence", "Reason")
         )
         self.extension_table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
         self.extension_table.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.NoSelection)
@@ -534,6 +534,15 @@ class MainWindow(QtWidgets.QMainWindow):
             claim = extension.get("matrix_claim_status") or extension.get("claim_status") or "unknown"
             latest = extension.get("latest_artifact") or {}
             latest_label = latest.get("version") or "not collected"
+            artifact_platform = ", ".join(latest.get("platform_tags") or []) or "unknown"
+            artifact_python_abi = "; ".join(
+                value
+                for value in (
+                    ", ".join(latest.get("python_tags") or []),
+                    ", ".join(latest.get("abi_tags") or []),
+                )
+                if value
+            ) or "unknown"
             evidence = ", ".join(extension.get("catalog_evidence_refs") or extension.get("evidence_refs") or []) or "none"
             values = (
                 extension.get("name") or extension.get("id") or "unknown",
@@ -541,6 +550,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 installed,
                 extension.get("target_match") or "unknown",
                 latest_label,
+                artifact_platform,
+                artifact_python_abi,
                 claim,
                 evidence,
                 extension.get("reason") or "",

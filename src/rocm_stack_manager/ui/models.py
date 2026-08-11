@@ -6,6 +6,7 @@ from PySide6 import QtCore
 class CandidateTableModel(QtCore.QAbstractTableModel):
     HEADERS = (
         "Family",
+        "Platform",
         "Lifecycle",
         "Channel",
         "GFX",
@@ -42,6 +43,7 @@ class CandidateTableModel(QtCore.QAbstractTableModel):
         candidate = self._rows[index.row()]
         values = (
             candidate.get("distribution_family") or "unknown",
+            candidate.get("platform") or "unknown",
             candidate.get("lifecycle") or "unknown",
             candidate.get("channel") or "unknown",
             candidate.get("gfx") or "unknown",

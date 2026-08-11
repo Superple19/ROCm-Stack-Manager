@@ -146,6 +146,8 @@ class UiTests(unittest.TestCase):
         )
         self.assertEqual(window.extension_table.rowCount(), 1)
         self.assertEqual(window.extension_table.item(0, 1).text(), "unknown")
+        self.assertEqual(window.extension_table.columnCount(), 10)
+        self.assertEqual(window.extension_table.horizontalHeaderItem(5).text(), "Artifact platform")
         self.assertIn("1 known extensions", window.extension_summary.text())
         window.close()
 

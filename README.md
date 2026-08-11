@@ -206,7 +206,7 @@ layer over the same core services. It supports target detection, Matrix
 catalog loading, candidate filtering, inventory, runtime verification, and
 core/extension dry-runs. Candidate filters include distribution family,
 current/historical lifecycle, channel, ROCm version, and candidate state. The
-table shows the exact candidate ID so historical artifact records are not
+table shows the target platform and exact candidate ID so historical artifact records are not
 silently collapsed into one row per channel. Core package apply and
 package/extension restore require a completed dry-run,
 target-local backup, and explicit confirmation. Extension apply remains

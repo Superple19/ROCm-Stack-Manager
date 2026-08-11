@@ -136,6 +136,7 @@ The candidate table should include:
 | Column | Meaning |
 |---|---|
 | Family | TheRock or legacy distribution family |
+| Platform | Target operating system; never inferred from the host fallback |
 | Lifecycle | current or historical observation |
 | Channel | stable, nightly, or staging |
 | GFX | Exact target architecture |
@@ -162,6 +163,10 @@ Selecting a candidate enables:
   warnings, and backup scope.
 - `Extension plan`: show each extension as `installable`, `blocked`,
   `unverified`, `conflict`, or `not_installed`.
+
+The extension inventory also shows the latest Matrix artifact platform tags and
+Python/ABI tags. Unknown tags remain visible as `unknown` and cannot be treated
+as a compatibility claim.
 
 After target detection, the UI also runs the ComfyUI extension inventory
 without a candidate and without network access. This inventory shows the
