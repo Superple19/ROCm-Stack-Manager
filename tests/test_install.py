@@ -47,7 +47,8 @@ class InstallPlanTests(unittest.TestCase):
             plan = build_install_plan(target, candidate)
 
         self.assertEqual(plan.command[0], str(target.python_executable))
-        self.assertIn("--index-url", plan.command)
+        self.assertIn("--extra-index-url", plan.command)
+        self.assertNotIn("--index-url", plan.command)
         self.assertIn("torch==2.12.0", plan.command)
 
     def test_warns_when_torchaudio_is_not_included(self):

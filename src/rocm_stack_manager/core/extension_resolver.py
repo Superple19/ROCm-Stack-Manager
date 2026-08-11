@@ -64,11 +64,9 @@ def build_extension_resolver_command(target, candidate, extension):
         "--ignore-installed",
         "--no-input",
         "--disable-pip-version-check",
-        "--report",
-        "-",
     ]
     if candidate.get("index_url") and not candidate.get("wheel_urls"):
-        command.extend(("--index-url", candidate["index_url"]))
+        command.extend(("--extra-index-url", candidate["index_url"]))
     command.extend(requirements)
     return tuple(command)
 

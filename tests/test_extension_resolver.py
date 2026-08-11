@@ -33,6 +33,9 @@ class ExtensionResolverTests(unittest.TestCase):
         command = build_extension_resolver_command(self.target, self.candidate, self.extension)
         self.assertIn("--dry-run", command)
         self.assertIn("--ignore-installed", command)
+        self.assertIn("--extra-index-url", command)
+        self.assertNotIn("--index-url", command)
+        self.assertNotIn("--report", command)
         self.assertIn("torch==2.14.0", command)
         self.assertIn("https://files.example/bitsandbytes.whl", command)
 

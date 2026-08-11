@@ -139,7 +139,7 @@ def build_install_plan(target, candidate, *, allow_unverified=False):
 
     command = [str(python), "-m", "pip", "install", "--no-input"]
     if candidate.get("index_url") and not wheel_urls:
-        command.extend(("--index-url", candidate["index_url"]))
+        command.extend(("--extra-index-url", candidate["index_url"]))
     command.extend(requirements)
     return InstallPlan(
         target_root=target.root,
