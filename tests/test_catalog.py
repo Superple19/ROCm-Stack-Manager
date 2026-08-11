@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from rocm_stack_manager.core.catalog import (
     DEFAULT_MATRIX_RAW_BASE_URL,
+    MATRIX_CATALOG_URL_ENV,
     CatalogError,
     ensure_catalog,
     iter_candidates,
@@ -117,6 +118,22 @@ class CatalogTests(unittest.TestCase):
                     f"{DEFAULT_MATRIX_RAW_BASE_URL}/data/catalog.json",
                     [call.args[0] for call in fetch.call_args_list],
                 )
+
+    def test_environment_source_overrides_default(self):
+        document = {"artifacts": [], "schema_version": 1}
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            "os.environ", {MATRIX_CATALOG_URL_ENV: "https://mirror.test/matrix"}
+        ):
+            with patch(
+                "rocm_stack_manager.core.catalog._download_bytes",
+                return_value=json.dumps(document).encode("utf-8"),
+            ) as fetch:
+                ensure_catalog(None, cache_dir=Path(directory) / "cache", base_url=None)
+
+            self.assertEqual(
+                fetch.call_args_list[0].args[0],
+                "https://mirror.test/matrix/data/catalog.json",
+            )
 
     def test_refresh_failure_preserves_existing_cache(self):
         document = {"artifacts": [], "schema_version": 1}

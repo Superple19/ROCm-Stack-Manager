@@ -23,6 +23,7 @@ class CatalogError(ValueError):
 DEFAULT_MATRIX_RAW_BASE_URL = (
     "https://raw.githubusercontent.com/Superple19/rocm-evidence-matrix/main"
 )
+MATRIX_CATALOG_URL_ENV = "ROCM_MATRIX_CATALOG_URL"
 _PROFILE_PATHS = (
     "profiles/comfyui/profile.json",
     "profiles/comfyui/extensions/bitsandbytes.json",
@@ -43,13 +44,22 @@ def default_catalog_cache_dir():
     return Path(root) / "rocm-stack-manager" / "matrix"
 
 
+def default_matrix_raw_base_url():
+    """Return the configured Matrix source or the public default."""
+
+    return os.environ.get(MATRIX_CATALOG_URL_ENV) or DEFAULT_MATRIX_RAW_BASE_URL
+
+
 def _download_bytes(url, timeout=30):
     request = Request(url, headers={"User-Agent": "rocm-stack-manager/catalog"})
     try:
         with urlopen(request, timeout=timeout) as response:
             return response.read()
     except (OSError, HTTPError, URLError) as error:
-        raise CatalogError(f"cannot fetch Matrix catalog source {url}: {error}") from error
+        raise CatalogError(
+            f"cannot fetch Matrix catalog source {url}: {error}; "
+            "use --catalog for an offline file or set ROCM_MATRIX_CATALOG_URL for a trusted mirror"
+        ) from error
 
 
 def _write_bytes_atomic(path, content):
@@ -72,7 +82,7 @@ def ensure_catalog(
     path=None,
     *,
     cache_dir=None,
-    base_url=DEFAULT_MATRIX_RAW_BASE_URL,
+    base_url=None,
     refresh=False,
 ):
     """Resolve an explicit catalog or fetch the official Matrix snapshot.
@@ -90,7 +100,7 @@ def ensure_catalog(
     if catalog_path.is_file() and not refresh:
         return catalog_path
 
-    base = str(base_url or DEFAULT_MATRIX_RAW_BASE_URL).rstrip("/")
+    base = str(base_url or default_matrix_raw_base_url()).rstrip("/")
     staging_parent = cache_root.parent
     staging_parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix="matrix-", dir=str(staging_parent)))

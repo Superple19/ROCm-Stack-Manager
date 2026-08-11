@@ -67,13 +67,13 @@ python -m rocm_stack_manager install `
   --candidate <candidate-id>
 python -m rocm_stack_manager candidates `
   --target C:\path\to\comfyui-portable `
-  --platform windows --gfx gfx1201 --channel stable
+  --platform windows --channel stable
 python -m rocm_stack_manager candidates `
   --target C:\path\to\comfyui-portable `
-  --platform windows --gfx gfx1201 --rocm 7.2.1
+  --platform windows --rocm 7.2.1
 python -m rocm_stack_manager plan `
   --target C:\path\to\comfyui-portable `
-  --platform windows --gfx gfx1201 --candidate <candidate-id>
+  --platform windows --candidate <candidate-id>
 python -m rocm_stack_manager restore `
   --target C:\path\to\comfyui-portable `
   --backup C:\path\to\backup\packages-<timestamp>.json
@@ -109,7 +109,10 @@ the official generated catalog and referenced evidence files from
 `~/.cache/rocm-stack-manager/matrix` (or `$XDG_CACHE_HOME`). Later commands
 reuse that snapshot. Use `--refresh-catalog` to request a new snapshot, or
 pass `--catalog` for a fully offline local file. `--catalog-url` is available
-for a trusted mirror or a local test server.
+for a trusted mirror or a local test server. The same source can be configured
+with `ROCM_MATRIX_CATALOG_URL`; when `--gfx` is omitted, a single GFX target
+reported by the selected target Python is used automatically. Multiple or
+undetected targets require an explicit `--gfx` value.
 
 The `inventory` command reads installed distributions from the selected target
 Python and classifies them against one candidate. Compiled extensions without

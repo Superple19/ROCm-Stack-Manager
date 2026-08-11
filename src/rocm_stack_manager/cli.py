@@ -40,7 +40,7 @@ def _add_catalog_options(parser):
     parser.add_argument(
         "--catalog-url",
         default=None,
-        help="Matrix raw repository base URL used when --catalog is omitted",
+        help="Matrix raw repository base URL (or ROCM_MATRIX_CATALOG_URL) used when --catalog is omitted",
     )
     parser.add_argument(
         "--refresh-catalog",
@@ -108,7 +108,10 @@ def parse_args(argv=None):
     )
     extensions.add_argument("--target", type=Path, required=True, help="Portable root or ComfyUI directory")
     extensions.add_argument("--catalog", type=Path, help="Optional Matrix catalog.json for profile evidence")
-    extensions.add_argument("--catalog-url", help="Matrix raw repository base URL used when catalog is omitted")
+    extensions.add_argument(
+        "--catalog-url",
+        help="Matrix raw repository base URL (or ROCM_MATRIX_CATALOG_URL) used when catalog is omitted",
+    )
     extensions.add_argument("--refresh-catalog", action="store_true")
     extensions.add_argument("--candidate", help="Optional exact Matrix candidate ID")
     extensions.add_argument("--extension", dest="selections", action="append", default=[])
