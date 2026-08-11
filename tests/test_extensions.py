@@ -22,13 +22,14 @@ class ExtensionReportTests(unittest.TestCase):
                 "package_name": "bitsandbytes",
                 "version": "0.48.2",
                 "python_tags": ["cp312"],
+                "abi_tags": ["cp312"],
                 "platform_tags": ["win_amd64"],
                 "artifact_urls": ["https://example.test/bitsandbytes.whl"],
             }]
         }
         report = build_extension_report(
             inventory,
-            candidate={"platform": "windows", "python_tag": "cp312", "rocm_version": "10.1.0"},
+            candidate={"platform": "windows", "python_tag": "cp312", "abi_tags": ["cp312"], "rocm_version": "10.1.0"},
             extension_catalog=catalog,
         )
         bitsandbytes = next(item for item in report["extensions"] if item["id"] == "bitsandbytes")
@@ -45,10 +46,11 @@ class ExtensionReportTests(unittest.TestCase):
                 "package_name": "bitsandbytes",
                 "version": "0.50.0",
                 "python_tags": ["py3"],
+                "abi_tags": ["none"],
                 "platform_tags": ["win_amd64", "win_arm64"],
                 "artifacts": [
-                    {"candidate_id": "amd64", "python_tag": "py3", "platform_tag": "win_amd64", "url": "https://example.test/amd64.whl", "requires_dist": []},
-                    {"candidate_id": "arm64", "python_tag": "py3", "platform_tag": "win_arm64", "url": "https://example.test/arm64.whl", "requires_dist": []},
+                    {"candidate_id": "amd64", "python_tag": "py3", "abi_tag": "none", "platform_tag": "win_amd64", "url": "https://example.test/amd64.whl", "requires_dist": []},
+                    {"candidate_id": "arm64", "python_tag": "py3", "abi_tag": "none", "platform_tag": "win_arm64", "url": "https://example.test/arm64.whl", "requires_dist": []},
                 ],
                 "artifact_urls": ["https://example.test/amd64.whl", "https://example.test/arm64.whl"],
             }]
@@ -56,6 +58,7 @@ class ExtensionReportTests(unittest.TestCase):
         candidate = {
             "platform": "windows",
             "python_tag": "cp312",
+            "abi_tags": ["cp312", "none"],
             "platform_tags": ["win_amd64"],
             "rocm_version": "10.1.0",
         }
@@ -171,6 +174,74 @@ class ExtensionReportTests(unittest.TestCase):
         self.assertTrue(all(item["status"] == "unverified" for item in plan.extensions))
         self.assertEqual(plan.commands, ())
 
+    def test_abi_mismatch_is_incompatible(self):
+        inventory = PackageInventory(Path("C:/target"), None, (), "detected")
+        catalog = {
+            "extensions": [{
+                "id": "extension:bitsandbytes:0.50.0",
+                "extension": "bitsandbytes",
+                "package_name": "bitsandbytes",
+                "version": "0.50.0",
+                "python_tags": ["cp311"],
+                "abi_tags": ["cp311"],
+                "platform_tags": ["win_amd64"],
+                "artifacts": [{
+                    "candidate_id": "cp311",
+                    "python_tag": "cp311",
+                    "abi_tag": "cp311",
+                    "platform_tag": "win_amd64",
+                    "url": "https://example.test/cp311.whl",
+                    "requires_dist": [],
+                }],
+                "artifact_urls": ["https://example.test/cp311.whl"],
+            }],
+        }
+        report = build_extension_report(
+            inventory,
+            candidate={
+                "platform": "windows",
+                "python_tag": "cp312",
+                "abi_tags": ["cp312"],
+                "platform_tags": ["win_amd64"],
+            },
+            extension_catalog=catalog,
+        )
+
+        bitsandbytes = next(item for item in report["extensions"] if item["id"] == "bitsandbytes")
+        self.assertEqual(bitsandbytes["target_match"], "incompatible")
+
+    def test_abi3_and_none_are_compatible_with_target(self):
+        inventory = PackageInventory(Path("C:/target"), None, (), "detected")
+        catalog = {
+            "extensions": [{
+                "id": "extension:bitsandbytes:0.50.0",
+                "extension": "bitsandbytes",
+                "package_name": "bitsandbytes",
+                "version": "0.50.0",
+                "python_tags": ["cp312", "py3"],
+                "abi_tags": ["abi3", "none"],
+                "platform_tags": ["win_amd64"],
+                "artifacts": [
+                    {"candidate_id": "abi3", "python_tag": "cp312", "abi_tag": "abi3", "platform_tag": "win_amd64", "url": "https://example.test/abi3.whl", "requires_dist": []},
+                    {"candidate_id": "none", "python_tag": "py3", "abi_tag": "none", "platform_tag": "win_amd64", "url": "https://example.test/none.whl", "requires_dist": []},
+                ],
+                "artifact_urls": ["https://example.test/abi3.whl", "https://example.test/none.whl"],
+            }],
+        }
+        report = build_extension_report(
+            inventory,
+            candidate={
+                "platform": "windows",
+                "python_tag": "cp312",
+                "abi_tags": ["cp312"],
+                "platform_tags": ["win_amd64"],
+            },
+            extension_catalog=catalog,
+        )
+
+        bitsandbytes = next(item for item in report["extensions"] if item["id"] == "bitsandbytes")
+        self.assertEqual(bitsandbytes["target_match"], "matched")
+
     def test_unverified_matching_artifact_is_preflightable_but_not_installable(self):
         target = type("Target", (), {"root": Path("C:/target"), "python_executable": Path("C:/target/python.exe")})()
         inventory = PackageInventory(Path("C:/target"), target.python_executable, (), "detected")
@@ -195,12 +266,14 @@ class ExtensionReportTests(unittest.TestCase):
                 "artifacts": [{
                     "candidate_id": "extension:bitsandbytes:0.50.0:py3:win_amd64:hash",
                     "python_tag": "py3",
+                    "abi_tag": "none",
                     "platform_tag": "win_amd64",
                     "url": "https://files.example/bitsandbytes.whl",
                     "requires_dist": [],
                 }],
                 "candidate_ids": ["extension:bitsandbytes:0.50.0:py3:win_amd64:hash"],
                 "python_tags": ["py3"],
+                "abi_tags": ["none"],
                 "platform_tags": ["win_amd64"],
                 "artifact_urls": ["https://files.example/bitsandbytes.whl"],
                 "requires_dist": [],

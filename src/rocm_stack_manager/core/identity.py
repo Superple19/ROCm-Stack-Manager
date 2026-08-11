@@ -30,12 +30,13 @@ def candidate_hash(candidate):
     return _digest(identity)
 
 
-def extension_candidate_id(extension, version, python_tag, platform_tag, source_id, artifact_url):
+def extension_candidate_id(extension, version, python_tag, platform_tag, source_id, artifact_url, abi_tag="unknown"):
     """Match Matrix's deterministic identity for one exact extension artifact."""
 
     identity = {
         "artifact_url": str(artifact_url),
         "extension": str(extension),
+        "abi_tag": str(abi_tag),
         "platform_tag": str(platform_tag),
         "python_tag": str(python_tag),
         "source_id": str(source_id),

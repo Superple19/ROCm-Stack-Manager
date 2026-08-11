@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from rocm_stack_manager.core.detection import detect_target
-from rocm_stack_manager.core.verify import probe_target, target_platform_tags, target_python_tag
+from rocm_stack_manager.core.verify import probe_target, target_abi_tags, target_platform_tags, target_python_tag
 
 
 class RuntimeProbeTests(unittest.TestCase):
@@ -99,3 +99,14 @@ class RuntimeProbeTests(unittest.TestCase):
             )()
             with patch("rocm_stack_manager.core.verify.subprocess.run", return_value=completed):
                 self.assertEqual(target_platform_tags(target), ("win_amd64", "any"))
+
+    def test_reads_target_abi_tags_from_interpreter(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = self._target(Path(directory))
+            completed = type(
+                "Completed",
+                (),
+                {"returncode": 0, "stdout": '{"abi_tags":["cp312","abi3","none"]}\n', "stderr": ""},
+            )()
+            with patch("rocm_stack_manager.core.verify.subprocess.run", return_value=completed):
+                self.assertEqual(target_abi_tags(target), ("cp312", "abi3", "none"))

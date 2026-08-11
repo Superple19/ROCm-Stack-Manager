@@ -226,21 +226,46 @@ def _requirement_mismatches(record, candidate):
 
 
 def _artifact_matches(artifact, candidate):
+    if not _artifact_python_platform_matches(artifact, candidate):
+        return False
+    abi_tag = artifact.get("abi_tag")
+    if abi_tag in {None, "", "unknown", "source"}:
+        return False
+    if abi_tag == "none":
+        return True
+    supported_abi_tags = set(candidate.get("abi_tags") or ())
+    return bool(supported_abi_tags) and abi_tag in supported_abi_tags
+
+
+def _artifact_python_platform_matches(artifact, candidate):
     python_tag = candidate.get("python_tag")
     if not python_tag:
         return False
-    if artifact.get("python_tag") not in {python_tag, "py3", "source"}:
+    if artifact.get("python_tag") in {None, "", "unknown", "source"}:
+        return False
+    if artifact.get("python_tag") not in {python_tag, "py3"}:
         return False
     platform_tag = artifact.get("platform_tag", "")
+    if platform_tag in {"", "unknown", "source"}:
+        return False
     platform = candidate.get("platform")
     supported_platform_tags = set(candidate.get("platform_tags") or ())
     if supported_platform_tags and platform_tag not in {"any", "source"}:
         return platform_tag in supported_platform_tags
     if platform == "windows":
-        return platform_tag.startswith("win") or platform_tag in {"any", "source"}
+        return platform_tag.startswith("win") or platform_tag == "any"
     if platform == "linux":
-        return platform_tag.startswith(("linux", "manylinux", "musllinux")) or platform_tag in {"any", "source"}
-    return platform_tag in {"any", "source"}
+        return platform_tag.startswith(("linux", "manylinux", "musllinux")) or platform_tag == "any"
+    return platform_tag == "any"
+
+
+def _artifact_abi_is_unknown(artifact, candidate):
+    if not _artifact_python_platform_matches(artifact, candidate):
+        return False
+    abi_tag = artifact.get("abi_tag")
+    if abi_tag in {None, "", "unknown", "source"}:
+        return True
+    return abi_tag != "none" and not candidate.get("abi_tags")
 
 
 def _record_artifacts(record):
@@ -262,6 +287,7 @@ def _record_artifacts(record):
             "filename": url.rsplit("/", 1)[-1],
             "version": record.get("version"),
             "python_tag": python_tag,
+            "abi_tag": (record.get("abi_tags") or ["unknown"])[0],
             "platform_tag": platform_tag,
             "url": url,
         }
@@ -284,6 +310,17 @@ def _record_matches(record, candidate):
     return any(_artifact_matches(artifact, candidate) for artifact in _record_artifacts(record))
 
 
+def _record_has_unknown_abi(record, candidate):
+    if record.get("rocm_version") and record["rocm_version"] != candidate.get("rocm_version"):
+        return False
+    if _requirement_mismatches(record, candidate):
+        return False
+    gfx_targets = set(record.get("gfx_targets") or ())
+    if gfx_targets and candidate.get("gfx") not in gfx_targets:
+        return False
+    return any(_artifact_abi_is_unknown(artifact, candidate) for artifact in _record_artifacts(record))
+
+
 def _catalog_matches(profile, candidate, extension_catalog):
     if not extension_catalog:
         return (), "not_collected"
@@ -299,6 +336,9 @@ def _catalog_matches(profile, candidate, extension_catalog):
         return records, "unknown"
     matches = [record for record in records if _record_matches(record, candidate)]
     if not matches:
+        unknown = [record for record in records if _record_has_unknown_abi(record, candidate)]
+        if unknown:
+            return unknown, "unknown"
         return records, "incompatible"
     return matches, "matched"
 
@@ -323,6 +363,7 @@ def _catalog_details(profile, candidate, extension_catalog):
                 artifact.get("platform_tag", "unknown"),
                 latest.get("source_id", "unknown"),
                 artifact.get("url", ""),
+                artifact.get("abi_tag", "unknown"),
             )
             for artifact in matching_artifacts
         ]

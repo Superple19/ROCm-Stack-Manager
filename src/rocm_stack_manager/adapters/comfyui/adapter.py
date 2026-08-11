@@ -7,7 +7,7 @@ from ...core.install import apply_extension_restore, build_extension_restore_pla
 from ...core.hardware import probe_hardware
 from ...core.extension_verification import build_extension_verification
 from ...core.launch import LaunchOptions, LaunchPlan
-from ...core.verify import probe_target, target_platform_tags, target_python_tag
+from ...core.verify import probe_target, target_abi_tags, target_platform_tags, target_python_tag
 from .detect import detect_comfyui
 from .extensions import (
     PROFILES,
@@ -53,6 +53,9 @@ class ComfyUIAdapter:
         platform_tags = target_platform_tags(target)
         if platform_tags:
             values["platform_tags"] = list(platform_tags)
+        abi_tags = target_abi_tags(target)
+        if abi_tags:
+            values["abi_tags"] = list(abi_tags)
         return values
 
     def launch(self, target, options: LaunchOptions):

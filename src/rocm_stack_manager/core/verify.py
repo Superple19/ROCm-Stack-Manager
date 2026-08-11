@@ -214,6 +214,46 @@ def target_platform_tags(target, timeout=10):
     return ()
 
 
+def target_abi_tags(target, timeout=10):
+    """Return wheel ABI tags supported by the selected interpreter."""
+
+    if target.python_executable is None:
+        return ()
+    script = (
+        "import json\n"
+        "values = []\n"
+        "try:\n"
+        "    from packaging import tags\n"
+        "    values.extend(tag.abi for tag in tags.sys_tags())\n"
+        "except Exception:\n"
+        "    pass\n"
+        "print(json.dumps({'abi_tags': list(dict.fromkeys(values))}))"
+    )
+    try:
+        completed = subprocess.run(
+            [str(target.python_executable), "-c", script],
+            cwd=str(target.comfyui_dir),
+            env=_clean_environment(target),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ()
+    if completed.returncode != 0:
+        return ()
+    for line in reversed(completed.stdout.splitlines()):
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        values = payload.get("abi_tags") if isinstance(payload, dict) else None
+        if isinstance(values, list):
+            return tuple(dict.fromkeys(str(value) for value in values if value))
+    return ()
+
+
 def _parse_probe_output(output):
     try:
         return json.loads(output)
