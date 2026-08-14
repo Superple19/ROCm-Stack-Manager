@@ -84,6 +84,7 @@ class ExtensionProvider(Protocol):
         candidate: dict | None = None,
         profile_documents: dict | None = None,
         extension_catalog: dict | None = None,
+        inventory: Any | None = None,
     ) -> dict:
         ...
 

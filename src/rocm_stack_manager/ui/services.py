@@ -190,6 +190,24 @@ class ManagerService:
         self._require_target()
         return self.adapter.inventory(self.target, candidate)
 
+    def prepare_target_snapshot(self, path):
+        """Prepare read-only target package and extension evidence without committing state."""
+
+        target = self.detect(path)
+        return target, *self.prepare_detected_target_snapshot(target)
+
+    def prepare_detected_target_snapshot(self, target):
+        """Prepare read-only package and extension evidence for an already detected target."""
+
+        inventory = self.adapter.inventory(target)
+        extension_report = None
+        if isinstance(self.adapter, ExtensionProvider):
+            extension_report = self._extension_inventory_for_target(
+                target,
+                inventory=inventory,
+            )
+        return inventory, extension_report
+
     def verify(self):
         self._require_target()
         return self.adapter.verify(self.target)
@@ -293,11 +311,20 @@ class ManagerService:
 
     def extension_inventory(self, candidate=None):
         self._require_target()
+        return self._extension_inventory_for_target(self.target, candidate=candidate)
+
+    def _extension_inventory_for_target(self, target, candidate=None, inventory=None):
         if not isinstance(self.adapter, ExtensionProvider):
             raise CapabilityUnavailable(f"adapter {self.adapter.id} has no extension inventory capability")
         profiles = (self.catalog or {}).get("_comfyui_extension_profiles", {})
         extension_catalog = (self.catalog or {}).get("_extension_catalog", {})
-        return self.adapter.extension_inventory(self.target, candidate, profiles, extension_catalog)
+        return self.adapter.extension_inventory(
+            target,
+            candidate,
+            profiles,
+            extension_catalog,
+            inventory=inventory,
+        )
 
     def extension_resolve(self, candidate, selections=()):
         self._require_target()

@@ -38,7 +38,10 @@ class CandidateTableModel(QtCore.QAbstractTableModel):
         return str(section + 1)
 
     def data(self, index, role=QtCore.Qt.ItemDataRole.DisplayRole):
-        if not index.isValid() or role != QtCore.Qt.ItemDataRole.DisplayRole:
+        if not index.isValid() or role not in {
+            QtCore.Qt.ItemDataRole.DisplayRole,
+            QtCore.Qt.ItemDataRole.ToolTipRole,
+        }:
             return None
         candidate = self._rows[index.row()]
         values = (

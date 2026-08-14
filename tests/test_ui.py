@@ -12,7 +12,7 @@ PY_SIDE_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 
 if PY_SIDE_AVAILABLE:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PySide6 import QtWidgets
+    from PySide6 import QtCore, QtWidgets
 
     from rocm_stack_manager.core.detection import TargetLayout
     from rocm_stack_manager.core.catalog import CatalogError
@@ -43,6 +43,10 @@ class UiTests(unittest.TestCase):
     def test_window_starts_read_only(self):
         window = MainWindow()
         self.assertEqual(window.windowTitle(), "ROCm Stack Manager")
+        self.assertEqual(
+            [window.tabs.tabText(index) for index in range(window.tabs.count())],
+            ["Setup", "Candidates", "Extensions", "Activity"],
+        )
         self.assertEqual(window.adapter_combo.currentText(), "comfyui")
         self.assertEqual(
             [window.adapter_combo.itemText(index) for index in range(window.adapter_combo.count())],
@@ -55,6 +59,174 @@ class UiTests(unittest.TestCase):
         self.assertFalse(window.restore_button.isEnabled())
         self.assertFalse(window.apply_restore_button.isEnabled())
         self.assertFalse(any(button.text() == "Apply" for button in window.findChildren(QtWidgets.QPushButton)))
+        self.assertTrue(window.catalog_summary.wordWrap())
+        self.assertEqual(
+            window.catalog_summary.sizePolicy().horizontalPolicy(),
+            QtWidgets.QSizePolicy.Policy.Ignored,
+        )
+        self.assertIs(window.tabs.widget(3).findChild(QtWidgets.QPlainTextEdit), window.output)
+        window.close()
+
+    def test_ui_settings_restore_configuration_without_restoring_plans(self):
+        settings = QtCore.QSettings(
+            QtCore.QSettings.Format.IniFormat,
+            QtCore.QSettings.Scope.UserScope,
+            "ROCmStackManagerTests",
+            "UiSettings",
+        )
+        settings.clear()
+        first = MainWindow(settings=settings)
+        first.target_edit.setText("C:/targets/comfyui")
+        first.catalog_edit.setText("C:/catalogs/catalog.json")
+        first.platform_combo.setCurrentText("linux")
+        first.channel_combo.setCurrentText("nightly")
+        first.rocm_edit.setText("7.14.0")
+        first.gfx_edit.setEditText("gfx1201")
+        first.tabs.setCurrentIndex(2)
+        first._core_plan = object()
+        first.apply_core_button.setEnabled(True)
+        first.close()
+
+        second = MainWindow(settings=settings)
+        self.assertEqual(second.target_edit.text(), "C:/targets/comfyui")
+        self.assertEqual(second.catalog_edit.text(), "C:/catalogs/catalog.json")
+        self.assertEqual(second.platform_combo.currentText(), "linux")
+        self.assertEqual(second.channel_combo.currentText(), "nightly")
+        self.assertEqual(second.rocm_edit.text(), "7.14.0")
+        self.assertEqual(second.gfx_edit.currentText(), "gfx1201")
+        self.assertEqual(second.tabs.currentIndex(), 2)
+        self.assertIsNone(second._core_plan)
+        self.assertFalse(second.apply_core_button.isEnabled())
+        second.close()
+        settings.clear()
+
+    def test_saved_target_startup_loads_metadata_without_full_verification(self):
+        class Inventory:
+            def as_dict(self):
+                return {
+                    "status": "detected",
+                    "packages": [
+                        {"name": "torch", "version": "2.12.0+rocm7.14.0"},
+                        {"name": "bitsandbytes", "version": "0.50.0", "compiled_files": ["x.pyd"]},
+                    ],
+                }
+
+        with tempfile.TemporaryDirectory() as directory:
+            target = self._target(Path(directory))
+            service = ManagerService()
+            window = MainWindow(service=service)
+            window.target_edit.setText(directory)
+            service.prepare_target_snapshot = lambda path: (
+                target,
+                Inventory(),
+                {"status": "detected", "extensions": [], "network_access": False},
+            )
+            calls = []
+
+            def run_inline(label, function, callback, **kwargs):
+                calls.append(label)
+                callback(function())
+
+            with patch.object(window, "_run", side_effect=run_inline), patch.object(
+                service, "inspect"
+            ) as inspect:
+                window._start_saved_snapshot()
+
+            self.assertEqual(service.target, target)
+            self.assertIn("torch==2.12.0+rocm7.14.0", window.snapshot_summary.text())
+            self.assertIn("Extensions: bitsandbytes==0.50.0", window.snapshot_summary.text())
+            self.assertIn("Read saved target snapshot", calls)
+            inspect.assert_not_called()
+            window.close()
+
+    def test_saved_local_catalog_is_loaded_without_network_refresh(self):
+        with tempfile.TemporaryDirectory() as directory:
+            catalog_path = Path(directory) / "catalog.json"
+            catalog_path.write_text("{}", encoding="utf-8")
+            window = MainWindow()
+            window.catalog_edit.setText(str(catalog_path))
+            with patch.object(window, "_load_catalog") as load_catalog:
+                window._start_saved_snapshot()
+            load_catalog.assert_called_once_with(False, startup=True)
+            window.close()
+
+    def test_detect_button_loads_target_snapshot(self):
+        class Inventory:
+            def as_dict(self):
+                return {
+                    "status": "detected",
+                    "packages": [{"name": "torch", "version": "2.12.0+rocm7.14.0"}],
+                }
+
+        with tempfile.TemporaryDirectory() as directory:
+            target = self._target(Path(directory))
+            service = ManagerService()
+            service.detect = lambda path: target
+            service.prepare_detected_target_snapshot = lambda detected: (
+                Inventory(),
+                {"status": "detected", "extensions": [], "network_access": False},
+            )
+            window = MainWindow(service=service)
+            window.target_edit.setText(directory)
+            calls = []
+
+            def run_inline(label, function, callback, **kwargs):
+                calls.append(label)
+                if label != "Inspect runtime and hardware":
+                    callback(function())
+
+            with patch.object(window, "_run", side_effect=run_inline):
+                window.detect_button.click()
+
+            self.assertEqual(service.target, target)
+            self.assertIn("Read target package snapshot", calls)
+            self.assertIn("torch==2.12.0+rocm7.14.0", window.snapshot_summary.text())
+            window.close()
+
+    def test_service_prepares_startup_snapshot_without_runtime_or_hardware_probe(self):
+        inventory = object()
+
+        class Adapter:
+            id = "fake"
+
+            def detect(self, path):
+                return "target"
+
+            def inventory(self, target, candidate=None):
+                return inventory
+
+            def extension_inventory(
+                self,
+                target,
+                candidate=None,
+                profile_documents=None,
+                extension_catalog=None,
+                inventory=None,
+            ):
+                return {"inventory_identity": id(inventory), "network_access": False}
+
+            def extension_plan(self, *args, **kwargs):
+                raise AssertionError("startup snapshot must not build an extension plan")
+
+        service = ManagerService()
+        service.adapter = Adapter()
+        target, prepared_inventory, extension_report = service.prepare_target_snapshot("target")
+        self.assertEqual(target, "target")
+        self.assertIs(prepared_inventory, inventory)
+        self.assertEqual(extension_report["inventory_identity"], id(inventory))
+        self.assertFalse(extension_report["network_access"])
+
+    def test_startup_candidate_listing_never_selects_or_plans(self):
+        window = MainWindow()
+        window.service.target = object()
+        window.service.catalog = {"targets": []}
+        window.gfx_edit.setEditText("gfx1201")
+        window._startup_autoload_candidates = True
+        with patch.object(window, "_find_candidates") as find_candidates:
+            window._maybe_start_saved_candidates()
+        find_candidates.assert_called_once_with()
+        self.assertIsNone(window._candidate)
+        self.assertIsNone(window._core_plan)
         window.close()
 
     def test_failed_result_is_not_reported_as_complete(self):

@@ -61,8 +61,16 @@ class ComfyUIAdapter:
     def launch(self, target, options: LaunchOptions):
         raise CapabilityUnavailable("ComfyUI launch planning is not implemented")
 
-    def extension_inventory(self, target, candidate=None, profile_documents=None, extension_catalog=None):
-        inventory = self.inventory(target, candidate)
+    def extension_inventory(
+        self,
+        target,
+        candidate=None,
+        profile_documents=None,
+        extension_catalog=None,
+        inventory=None,
+    ):
+        if inventory is None:
+            inventory = self.inventory(target, candidate)
         candidate = self._candidate_for_target(target, candidate)
         return build_extension_report(inventory, profile_documents, candidate, extension_catalog)
 

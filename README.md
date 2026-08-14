@@ -222,15 +222,33 @@ write Matrix evidence, and returns `resolver_verified` or `resolver_failed`
 for that candidate only. Use `--output` to save an explicit local result.
 
 The optional PySide6 interface is an inspection and safety-gated operation
-layer over the same core services. It supports target detection, Matrix
+layer over the same core services. Its `Setup`, `Candidates`, `Extensions`,
+and `Activity` tabs separate target/catalog configuration, candidate selection,
+extension inventory, and operation output. It supports target detection, Matrix
 catalog loading, candidate filtering, inventory, runtime verification, and
 core/extension dry-runs. Candidate filters include distribution family,
 current/historical lifecycle, channel, ROCm version, and candidate state. The
-table shows the target platform and exact candidate ID so historical artifact records are not
-silently collapsed into one row per channel. Core package apply and
+tables keep long paths and evidence identifiers inside scrollable or wrapped
+regions; full operation records remain available in the Activity output. The
+candidate table shows the target platform and exact candidate ID so historical
+artifact records are not silently collapsed into one row per channel. Core package apply and
 package/extension restore require a completed dry-run,
 target-local backup, and explicit confirmation. Extension apply remains
 disabled unless every selected extension has exact Matrix source and evidence.
+The UI persists harmless preferences such as the last target/catalog paths,
+filters, selected tab, and window geometry through the platform settings store.
+It does not persist detection results, candidates, dry-run plans, restore plans,
+or apply approvals. A saved path is used at startup only for the read-only
+snapshot described below. When a
+saved target still exists, startup detects its layout and reads target-local
+package metadata plus the extension inventory. When a saved catalog path is a
+real local file, startup loads and hash-validates it without network access.
+If the saved target, catalog, and GFX filter are all available, the UI may
+populate the candidate table, but it never selects a candidate automatically.
+Startup does not import Torch for runtime verification, probe hardware, run a
+tensor smoke test, refresh the official catalog, resolve packages, or create a
+plan. Full runtime/hardware verification remains an explicit `Verify target`
+action.
 Target and catalog workers prepare results without mutating shared state; only
 the latest generation is committed. Changing either context invalidates all
 candidate and restore plans. Target/catalog controls are locked while an apply

@@ -2,7 +2,7 @@
 
 import sys
 
-from PySide6 import QtWidgets
+from PySide6 import QtCore, QtWidgets
 
 from .main_window import MainWindow
 
@@ -10,7 +10,8 @@ from .main_window import MainWindow
 def main(argv=None):
     app = QtWidgets.QApplication(list(argv) if argv is not None else sys.argv)
     app.setApplicationName("ROCm Stack Manager")
-    window = MainWindow()
+    settings = QtCore.QSettings("ROCm Community", "ROCm Stack Manager")
+    window = MainWindow(settings=settings)
     window.show()
     return app.exec()
 

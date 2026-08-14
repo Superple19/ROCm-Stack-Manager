@@ -14,9 +14,13 @@ from .workers import Task
 
 
 class MainWindow(QtWidgets.QMainWindow):
-    def __init__(self, service=None, parent=None):
+    def __init__(self, service=None, parent=None, settings=None):
         super().__init__(parent)
         self.service = service or ManagerService()
+        self.settings = settings
+        self._saved_gfx = None
+        self._startup_catalog_path = None
+        self._startup_autoload_candidates = False
         self.thread_pool = QtCore.QThreadPool(self)
         self._tasks = set()
         self._generation = 0
@@ -30,8 +34,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._restore_network_allowed = False
         self._mutation_in_progress = False
         self._build_ui()
-        if hasattr(self.service, "host_hardware"):
-            QtCore.QTimer.singleShot(0, self._probe_host_hardware)
+        self._restore_ui_settings()
+        if self.settings is not None:
+            QtCore.QTimer.singleShot(0, self._start_saved_snapshot)
 
     def closeEvent(self, event):
         if self._mutation_in_progress:
@@ -48,18 +53,115 @@ class MainWindow(QtWidgets.QMainWindow):
         self.thread_pool.clear()
         self.thread_pool.waitForDone(2000)
         self._tasks.clear()
+        self._save_ui_settings()
         super().closeEvent(event)
+
+    def _restore_ui_settings(self):
+        if self.settings is None:
+            return
+
+        geometry = self.settings.value("window/geometry")
+        if geometry:
+            self.restoreGeometry(geometry)
+        state = self.settings.value("window/state")
+        if state:
+            self.restoreState(state)
+
+        adapter = self.settings.value("configuration/adapter")
+        if adapter in available_adapters():
+            self.adapter_combo.blockSignals(True)
+            self.adapter_combo.setCurrentText(str(adapter))
+            self.adapter_combo.blockSignals(False)
+            if self.service.adapter_name != adapter:
+                self.service.set_adapter(str(adapter))
+        self.target_edit.setText(str(self.settings.value("configuration/target_path", "")))
+        self.catalog_edit.setText(str(self.settings.value("configuration/catalog_path", "")))
+
+        self._restore_combo_value(self.platform_combo, "configuration/platform")
+        self._saved_gfx = str(self.settings.value("configuration/gfx", "")).strip() or None
+        if self._saved_gfx:
+            self.gfx_edit.setEditText(self._saved_gfx)
+        self._restore_combo_value(self.channel_combo, "configuration/channel")
+        self.rocm_edit.setText(str(self.settings.value("configuration/rocm", "")))
+        self._restore_combo_value(self.family_combo, "configuration/family")
+        self._restore_combo_value(self.lifecycle_combo, "configuration/lifecycle")
+        self._restore_combo_value(self.kind_combo, "configuration/candidate_kind")
+
+        tab_index = self.settings.value("window/tab", 0, type=int)
+        if 0 <= tab_index < self.tabs.count():
+            self.tabs.setCurrentIndex(tab_index)
+
+    def _save_ui_settings(self):
+        if self.settings is None:
+            return
+
+        self.settings.setValue("window/geometry", self.saveGeometry())
+        self.settings.setValue("window/state", self.saveState())
+        self.settings.setValue("window/tab", self.tabs.currentIndex())
+        self.settings.setValue("configuration/adapter", self.adapter_combo.currentText())
+        self.settings.setValue("configuration/target_path", self.target_edit.text().strip())
+        self.settings.setValue("configuration/catalog_path", self.catalog_edit.text().strip())
+        self.settings.setValue("configuration/platform", self.platform_combo.currentText())
+        self.settings.setValue("configuration/gfx", self.gfx_edit.currentText().strip())
+        self.settings.setValue("configuration/channel", self.channel_combo.currentText())
+        self.settings.setValue("configuration/rocm", self.rocm_edit.text().strip())
+        self.settings.setValue("configuration/family", self.family_combo.currentText())
+        self.settings.setValue("configuration/lifecycle", self.lifecycle_combo.currentText())
+        self.settings.setValue("configuration/candidate_kind", self.kind_combo.currentText())
+        self.settings.sync()
+
+    def _restore_combo_value(self, combo, key):
+        if self.settings is None:
+            return
+        value = self.settings.value(key)
+        if value is not None and combo.findText(str(value)) >= 0:
+            combo.setCurrentText(str(value))
 
     def _build_ui(self):
         self.setWindowTitle("ROCm Stack Manager")
         self.resize(1180, 760)
 
         central = QtWidgets.QWidget(self)
+        central.setObjectName("mainSurface")
         self.setCentralWidget(central)
         root = QtWidgets.QVBoxLayout(central)
+        root.setContentsMargins(20, 16, 20, 14)
+        root.setSpacing(0)
+
+        self.tabs = QtWidgets.QTabWidget()
+        self.tabs.setDocumentMode(True)
+        root.addWidget(self.tabs, 1)
+
+        setup_page = QtWidgets.QWidget()
+        setup_layout = QtWidgets.QVBoxLayout(setup_page)
+        setup_layout.setContentsMargins(4, 18, 4, 4)
+        setup_layout.setSpacing(14)
+
+        header = QtWidgets.QWidget()
+        header.setObjectName("pageHeader")
+        header_layout = QtWidgets.QVBoxLayout(header)
+        header_layout.setContentsMargins(2, 0, 2, 4)
+        header_layout.setSpacing(3)
+        eyebrow = QtWidgets.QLabel("ROCM STACK MANAGER")
+        eyebrow.setObjectName("eyebrow")
+        title = QtWidgets.QLabel("Manage a target environment")
+        title.setObjectName("pageTitle")
+        subtitle = QtWidgets.QLabel(
+            "Inspect package evidence, build a dry-run plan, and keep every change explicit."
+        )
+        subtitle.setObjectName("pageSubtitle")
+        subtitle.setWordWrap(True)
+        header_layout.addWidget(eyebrow)
+        header_layout.addWidget(title)
+        header_layout.addWidget(subtitle)
+        setup_layout.addWidget(header)
 
         target_group = QtWidgets.QGroupBox("Target")
+        target_group.setObjectName("cardGroup")
         target_layout = QtWidgets.QGridLayout(target_group)
+        target_layout.setContentsMargins(16, 20, 16, 16)
+        target_layout.setHorizontalSpacing(12)
+        target_layout.setVerticalSpacing(10)
         self.adapter_combo = QtWidgets.QComboBox()
         self.adapter_combo.addItems(available_adapters())
         self.adapter_combo.setCurrentText(self.service.adapter_name)
@@ -68,6 +170,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.target_edit.setPlaceholderText("Select a ComfyUI portable, venv, or source directory")
         self.target_browse_button = QtWidgets.QPushButton("Browse…")
         self.detect_button = QtWidgets.QPushButton("Detect")
+        self.detect_button.setObjectName("primaryButton")
         self.target_browse_button.clicked.connect(self._browse_target)
         self.detect_button.clicked.connect(self._detect)
         target_layout.addWidget(QtWidgets.QLabel("Adapter"), 0, 0)
@@ -77,17 +180,40 @@ class MainWindow(QtWidgets.QMainWindow):
         target_layout.addWidget(self.target_browse_button, 1, 3)
         target_layout.addWidget(self.detect_button, 1, 4)
         self.target_summary = QtWidgets.QLabel("No target detected")
+        self.target_summary.setObjectName("targetStatus")
         self.target_summary.setWordWrap(True)
+        self.target_summary.setMinimumWidth(0)
+        self.target_summary.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Preferred,
+        )
         target_layout.addWidget(self.target_summary, 2, 0, 1, 5)
-        root.addWidget(target_group)
+        self.snapshot_summary = QtWidgets.QLabel(
+            "Installed packages: not loaded | Extensions: not loaded | "
+            "Runtime verification: not run | Hardware/tensor: not run"
+        )
+        self.snapshot_summary.setObjectName("summaryStatus")
+        self.snapshot_summary.setWordWrap(True)
+        self.snapshot_summary.setMinimumWidth(0)
+        self.snapshot_summary.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Preferred,
+        )
+        target_layout.addWidget(self.snapshot_summary, 3, 0, 1, 5)
+        setup_layout.addWidget(target_group)
 
         catalog_group = QtWidgets.QGroupBox("Matrix catalog")
+        catalog_group.setObjectName("cardGroup")
         catalog_layout = QtWidgets.QGridLayout(catalog_group)
+        catalog_layout.setContentsMargins(16, 20, 16, 16)
+        catalog_layout.setHorizontalSpacing(12)
+        catalog_layout.setVerticalSpacing(10)
         self.catalog_edit = QtWidgets.QLineEdit()
         self.catalog_edit.setPlaceholderText("Optional local catalog.json or matrix.json")
         self.catalog_browse_button = QtWidgets.QPushButton("Browse…")
         self.load_catalog_button = QtWidgets.QPushButton("Load")
         self.refresh_catalog_button = QtWidgets.QPushButton("Refresh official")
+        self.refresh_catalog_button.setObjectName("primaryButton")
         self.catalog_browse_button.clicked.connect(self._browse_catalog)
         self.load_catalog_button.clicked.connect(lambda: self._load_catalog(False))
         self.refresh_catalog_button.clicked.connect(lambda: self._load_catalog(True))
@@ -97,11 +223,22 @@ class MainWindow(QtWidgets.QMainWindow):
         catalog_layout.addWidget(self.load_catalog_button, 0, 3)
         catalog_layout.addWidget(self.refresh_catalog_button, 0, 4)
         self.catalog_summary = QtWidgets.QLabel("No catalog loaded")
+        self.catalog_summary.setObjectName("catalogStatus")
+        self.catalog_summary.setWordWrap(True)
+        self.catalog_summary.setMinimumWidth(0)
+        self.catalog_summary.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Preferred,
+        )
         catalog_layout.addWidget(self.catalog_summary, 1, 0, 1, 5)
-        root.addWidget(catalog_group)
+        setup_layout.addWidget(catalog_group)
 
         filters = QtWidgets.QGroupBox("Candidate filters")
+        filters.setObjectName("cardGroup")
         filter_layout = QtWidgets.QGridLayout(filters)
+        filter_layout.setContentsMargins(16, 20, 16, 16)
+        filter_layout.setHorizontalSpacing(12)
+        filter_layout.setVerticalSpacing(10)
         self.platform_combo = QtWidgets.QComboBox()
         self.platform_combo.addItems(("windows", "linux"))
         detected_platform = host_platform()
@@ -117,6 +254,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.gfx_edit.setEditable(True)
         self._set_gfx_placeholder("Detected GFX or enter manually")
         self.gfx_status = QtWidgets.QLabel("No GFX detected")
+        self.gfx_status.setObjectName("summaryStatus")
         self.channel_combo = QtWidgets.QComboBox()
         self.channel_combo.addItems(("all", "stable", "nightly", "staging"))
         self.rocm_edit = QtWidgets.QLineEdit()
@@ -128,27 +266,43 @@ class MainWindow(QtWidgets.QMainWindow):
         self.kind_combo = QtWidgets.QComboBox()
         self.kind_combo.addItems(("all", "installable", "artifact_only", "unavailable"))
         self.candidate_summary = QtWidgets.QLabel("No candidates loaded")
+        self.candidate_summary.setObjectName("summaryStatus")
+        self.candidate_summary.setWordWrap(True)
+        self.candidate_summary.setMinimumWidth(0)
+        self.candidate_summary.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Preferred,
+        )
         self.find_button = QtWidgets.QPushButton("Find candidates")
+        self.find_button.setObjectName("primaryButton")
         self.find_button.clicked.connect(self._find_candidates)
         filter_layout.addWidget(QtWidgets.QLabel("Platform"), 0, 0)
         filter_layout.addWidget(self.platform_combo, 0, 1)
         filter_layout.addWidget(QtWidgets.QLabel("GFX"), 0, 2)
         filter_layout.addWidget(self.gfx_edit, 0, 3)
-        filter_layout.addWidget(self.gfx_status, 0, 4)
-        filter_layout.addWidget(QtWidgets.QLabel("Channel"), 0, 5)
-        filter_layout.addWidget(self.channel_combo, 0, 6)
-        filter_layout.addWidget(QtWidgets.QLabel("ROCm"), 0, 7)
-        filter_layout.addWidget(self.rocm_edit, 0, 8)
-        filter_layout.addWidget(self.find_button, 0, 9)
-        filter_layout.addWidget(QtWidgets.QLabel("Family"), 1, 0)
-        filter_layout.addWidget(self.family_combo, 1, 1)
-        filter_layout.addWidget(QtWidgets.QLabel("Lifecycle"), 1, 2)
-        filter_layout.addWidget(self.lifecycle_combo, 1, 3)
-        filter_layout.addWidget(QtWidgets.QLabel("Candidate state"), 1, 5)
-        filter_layout.addWidget(self.kind_combo, 1, 6)
-        filter_layout.addWidget(self.candidate_summary, 1, 7, 1, 3)
-        root.addWidget(filters)
+        filter_layout.addWidget(self.gfx_status, 0, 4, 1, 2)
+        filter_layout.addWidget(QtWidgets.QLabel("Channel"), 1, 0)
+        filter_layout.addWidget(self.channel_combo, 1, 1)
+        filter_layout.addWidget(QtWidgets.QLabel("ROCm"), 1, 2)
+        filter_layout.addWidget(self.rocm_edit, 1, 3)
+        filter_layout.addWidget(QtWidgets.QLabel("Family"), 1, 4)
+        filter_layout.addWidget(self.family_combo, 1, 5)
+        filter_layout.addWidget(QtWidgets.QLabel("Lifecycle"), 2, 0)
+        filter_layout.addWidget(self.lifecycle_combo, 2, 1)
+        filter_layout.addWidget(QtWidgets.QLabel("Candidate state"), 2, 2)
+        filter_layout.addWidget(self.kind_combo, 2, 3)
+        filter_layout.addWidget(self.find_button, 2, 4)
+        filter_layout.addWidget(self.candidate_summary, 3, 0, 1, 6)
+        for column in (1, 3, 5):
+            filter_layout.setColumnStretch(column, 1)
+        setup_layout.addWidget(filters)
+        setup_layout.addStretch(1)
+        self.tabs.addTab(setup_page, "Setup")
 
+        candidates_page = QtWidgets.QWidget()
+        candidates_layout = QtWidgets.QVBoxLayout(candidates_page)
+        candidates_layout.setContentsMargins(4, 18, 4, 4)
+        candidates_layout.setSpacing(14)
         self.candidate_model = CandidateTableModel(self)
         self.candidate_view = QtWidgets.QTableView()
         self.candidate_view.setModel(self.candidate_model)
@@ -158,11 +312,53 @@ class MainWindow(QtWidgets.QMainWindow):
         self.candidate_view.selectionModel().selectionChanged.connect(self._candidate_selected)
         self.candidate_view.horizontalHeader().setStretchLastSection(True)
         self.candidate_view.setMinimumHeight(220)
-        root.addWidget(self.candidate_view, 1)
+        self.candidate_view.setSizeAdjustPolicy(
+            QtWidgets.QAbstractScrollArea.SizeAdjustPolicy.AdjustIgnored
+        )
+        candidates_layout.addWidget(self.candidate_view, 1)
 
+        candidate_actions = QtWidgets.QGroupBox("Candidate actions")
+        candidate_actions.setObjectName("actionGroup")
+        candidate_actions_layout = QtWidgets.QHBoxLayout(candidate_actions)
+        candidate_actions_layout.setContentsMargins(14, 12, 14, 12)
+        candidate_actions_layout.setSpacing(8)
+        self.verify_button = QtWidgets.QPushButton("Verify target")
+        self.inventory_button = QtWidgets.QPushButton("Inventory")
+        self.plan_button = QtWidgets.QPushButton("Install dry-run")
+        self.plan_button.setObjectName("primaryButton")
+        self.apply_core_button = QtWidgets.QPushButton("Apply core")
+        self.apply_core_button.setObjectName("warningButton")
+        self.allow_unverified = QtWidgets.QCheckBox("Allow unverified evidence")
+        for button in (
+            self.verify_button,
+            self.inventory_button,
+            self.plan_button,
+            self.apply_core_button,
+        ):
+            button.setEnabled(False)
+            candidate_actions_layout.addWidget(button)
+        candidate_actions_layout.addWidget(self.allow_unverified)
+        candidate_actions_layout.addStretch(1)
+        candidates_layout.addWidget(candidate_actions)
+        self.tabs.addTab(candidates_page, "Candidates")
+
+        extensions_page = QtWidgets.QWidget()
+        extensions_layout = QtWidgets.QVBoxLayout(extensions_page)
+        extensions_layout.setContentsMargins(4, 18, 4, 4)
+        extensions_layout.setSpacing(14)
         extension_group = QtWidgets.QGroupBox("ComfyUI extension inventory")
+        extension_group.setObjectName("cardGroup")
         extension_layout = QtWidgets.QVBoxLayout(extension_group)
+        extension_layout.setContentsMargins(16, 20, 16, 16)
+        extension_layout.setSpacing(10)
         self.extension_summary = QtWidgets.QLabel("No target extension inventory")
+        self.extension_summary.setObjectName("summaryStatus")
+        self.extension_summary.setWordWrap(True)
+        self.extension_summary.setMinimumWidth(0)
+        self.extension_summary.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Preferred,
+        )
         self.extension_table = QtWidgets.QTableWidget(0, 10)
         self.extension_table.setHorizontalHeaderLabels(
             ("Extension", "Status", "Installed", "Target match", "Latest artifact", "Artifact platform", "Python/ABI", "Matrix claim", "Evidence", "Reason")
@@ -170,35 +366,61 @@ class MainWindow(QtWidgets.QMainWindow):
         self.extension_table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
         self.extension_table.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.NoSelection)
         self.extension_table.horizontalHeader().setStretchLastSection(True)
+        self.extension_table.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.extension_table.setSizeAdjustPolicy(
+            QtWidgets.QAbstractScrollArea.SizeAdjustPolicy.AdjustIgnored
+        )
+        self.extension_table.setWordWrap(False)
         self.extension_table.setMinimumHeight(150)
         extension_layout.addWidget(self.extension_summary)
-        extension_layout.addWidget(self.extension_table)
-        root.addWidget(extension_group)
+        extension_layout.addWidget(self.extension_table, 1)
+        extensions_layout.addWidget(extension_group, 1)
 
-        actions = QtWidgets.QHBoxLayout()
-        self.verify_button = QtWidgets.QPushButton("Verify target")
-        self.inventory_button = QtWidgets.QPushButton("Inventory")
-        self.plan_button = QtWidgets.QPushButton("Install dry-run")
+        extension_actions = QtWidgets.QGroupBox("Extension actions")
+        extension_actions.setObjectName("actionGroup")
+        extension_actions_layout = QtWidgets.QHBoxLayout(extension_actions)
+        extension_actions_layout.setContentsMargins(14, 12, 14, 12)
+        extension_actions_layout.setSpacing(8)
         self.extension_button = QtWidgets.QPushButton("Extension plan")
-        self.apply_core_button = QtWidgets.QPushButton("Apply core")
+        self.extension_button.setObjectName("primaryButton")
         self.apply_extension_button = QtWidgets.QPushButton("Apply extension")
+        self.apply_extension_button.setObjectName("warningButton")
+        self.extension_button.setEnabled(False)
+        self.apply_extension_button.setEnabled(False)
+        extension_actions_layout.addWidget(self.extension_button)
+        extension_actions_layout.addWidget(self.apply_extension_button)
+        extension_actions_layout.addStretch(1)
+        extensions_layout.addWidget(extension_actions)
+        self.tabs.addTab(extensions_page, "Extensions")
+
+        activity_page = QtWidgets.QWidget()
+        activity_layout = QtWidgets.QVBoxLayout(activity_page)
+        activity_layout.setContentsMargins(4, 18, 4, 4)
+        activity_layout.setSpacing(14)
+        restore_group = QtWidgets.QGroupBox("Restore")
+        restore_group.setObjectName("actionGroup")
+        restore_layout = QtWidgets.QHBoxLayout(restore_group)
+        restore_layout.setContentsMargins(14, 12, 14, 12)
+        restore_layout.setSpacing(8)
         self.restore_button = QtWidgets.QPushButton("Restore dry-run…")
+        self.restore_button.setObjectName("primaryButton")
         self.apply_restore_button = QtWidgets.QPushButton("Apply restore")
-        self.allow_unverified = QtWidgets.QCheckBox("Allow unverified evidence")
-        for button in (
-            self.verify_button,
-            self.inventory_button,
-            self.plan_button,
-            self.extension_button,
-            self.apply_core_button,
-            self.apply_extension_button,
-            self.apply_restore_button,
-        ):
-            button.setEnabled(False)
-            actions.addWidget(button)
-        actions.addWidget(self.restore_button)
+        self.apply_restore_button.setObjectName("warningButton")
         self.restore_button.setEnabled(False)
-        actions.addWidget(self.allow_unverified)
+        self.apply_restore_button.setEnabled(False)
+        restore_layout.addWidget(self.restore_button)
+        restore_layout.addWidget(self.apply_restore_button)
+        restore_layout.addStretch(1)
+        activity_layout.addWidget(restore_group)
+
+        self.output = QtWidgets.QPlainTextEdit()
+        self.output.setObjectName("activityOutput")
+        self.output.setReadOnly(True)
+        self.output.setPlaceholderText("Operation results and warnings appear here")
+        activity_layout.addWidget(self.output, 1)
+        self.tabs.addTab(activity_page, "Activity")
+
+        self.restore_button.setEnabled(False)
         self.verify_button.clicked.connect(self._verify)
         self.inventory_button.clicked.connect(self._inventory)
         self.plan_button.clicked.connect(self._plan)
@@ -207,13 +429,288 @@ class MainWindow(QtWidgets.QMainWindow):
         self.apply_extension_button.clicked.connect(self._apply_extensions)
         self.restore_button.clicked.connect(self._restore_dry_run)
         self.apply_restore_button.clicked.connect(self._apply_restore)
-        root.addLayout(actions)
-
-        self.output = QtWidgets.QPlainTextEdit()
-        self.output.setReadOnly(True)
-        self.output.setPlaceholderText("Operation results and warnings appear here")
-        root.addWidget(self.output, 1)
         self.statusBar().showMessage("Ready")
+        self._apply_visual_theme()
+
+    def _apply_visual_theme(self):
+        self.setStyleSheet(
+            """
+            QMainWindow, QWidget#mainSurface {
+                background: #101318;
+                color: #e6eaf0;
+                font-size: 13px;
+            }
+            QTabWidget::pane {
+                background: #101318;
+                border: none;
+                top: -1px;
+            }
+            QTabBar {
+                qproperty-drawBase: 0;
+            }
+            QTabBar::tab {
+                background: transparent;
+                color: #8e99aa;
+                padding: 11px 18px 10px 18px;
+                margin-right: 4px;
+                border-bottom: 2px solid transparent;
+                font-weight: 600;
+            }
+            QTabBar::tab:hover {
+                color: #dce4f0;
+                background: #171c25;
+            }
+            QTabBar::tab:selected {
+                color: #f4f7fb;
+                border-bottom: 2px solid #5b9cff;
+            }
+            QGroupBox {
+                background: transparent;
+                border: none;
+                margin-top: 8px;
+                padding-top: 12px;
+                font-weight: 600;
+                color: #b7c1d1;
+            }
+            QGroupBox#cardGroup {
+                background: #171c24;
+                border: 1px solid #283241;
+                border-radius: 10px;
+            }
+            QGroupBox#actionGroup {
+                background: #141a22;
+                border: 1px solid #263143;
+                border-radius: 9px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 14px;
+                padding: 0 7px;
+                color: #aeb9ca;
+            }
+            QLabel#eyebrow {
+                color: #6fa7ff;
+                font-size: 11px;
+                font-weight: 700;
+                letter-spacing: 1px;
+            }
+            QLabel#pageTitle {
+                color: #f4f7fb;
+                font-size: 24px;
+                font-weight: 700;
+            }
+            QLabel#pageSubtitle {
+                color: #8792a4;
+                font-size: 13px;
+            }
+            QLabel#targetStatus, QLabel#catalogStatus, QLabel#summaryStatus {
+                background: #121820;
+                border: 1px solid #263143;
+                border-radius: 6px;
+                color: #aeb9ca;
+                padding: 8px 10px;
+            }
+            QLineEdit, QComboBox {
+                background: #10151c;
+                border: 1px solid #354052;
+                border-radius: 7px;
+                color: #e6eaf0;
+                min-height: 34px;
+                padding: 0 10px;
+                selection-background-color: #3f7fdb;
+            }
+            QLineEdit:focus, QComboBox:focus {
+                border: 1px solid #5b9cff;
+            }
+            QLineEdit:disabled, QComboBox:disabled {
+                background: #151a21;
+                color: #667285;
+            }
+            QComboBox::drop-down {
+                border: none;
+                width: 26px;
+            }
+            QPushButton {
+                background: #222a36;
+                border: 1px solid #3a4658;
+                border-radius: 7px;
+                color: #e6eaf0;
+                min-height: 34px;
+                padding: 0 14px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background: #2b3748;
+                border-color: #61728b;
+            }
+            QPushButton:pressed {
+                background: #1b2430;
+            }
+            QPushButton#primaryButton {
+                background: #2463b5;
+                border-color: #4d8dde;
+                color: #ffffff;
+            }
+            QPushButton#primaryButton:hover {
+                background: #2d73ce;
+            }
+            QPushButton#warningButton {
+                background: #5b3528;
+                border-color: #a66446;
+                color: #ffe9de;
+            }
+            QPushButton#warningButton:hover {
+                background: #744331;
+            }
+            QPushButton:disabled, QCheckBox:disabled {
+                background: #191f28;
+                border-color: #293342;
+                color: #647084;
+            }
+            QCheckBox {
+                color: #b6c1d1;
+                spacing: 8px;
+            }
+            QCheckBox::indicator {
+                width: 16px;
+                height: 16px;
+                border: 1px solid #4a586d;
+                border-radius: 4px;
+                background: #10151c;
+            }
+            QCheckBox::indicator:checked {
+                background: #3f7fdb;
+                border-color: #6fa7ff;
+            }
+            QTableView, QTableWidget {
+                background: #11161e;
+                alternate-background-color: #151b24;
+                border: 1px solid #2a3545;
+                border-radius: 8px;
+                color: #dce4ef;
+                gridline-color: #25303e;
+                selection-background-color: #244c7d;
+                selection-color: #ffffff;
+            }
+            QHeaderView::section {
+                background: #1b2430;
+                border: none;
+                border-bottom: 1px solid #303d4f;
+                color: #aebbd0;
+                padding: 9px 10px;
+                font-weight: 600;
+            }
+            QPlainTextEdit#activityOutput {
+                background: #0d1117;
+                border: 1px solid #283241;
+                border-radius: 8px;
+                color: #b9c7d9;
+                padding: 10px;
+                selection-background-color: #244c7d;
+            }
+            QStatusBar {
+                background: #0c0f14;
+                border-top: 1px solid #202936;
+                color: #8e99aa;
+            }
+            QScrollBar:vertical {
+                background: #11161e;
+                width: 12px;
+                margin: 2px;
+            }
+            QScrollBar::handle:vertical {
+                background: #3a4658;
+                border-radius: 5px;
+                min-height: 24px;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical,
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal,
+            QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+                background: none;
+                border: none;
+            }
+            """
+        )
+
+    def _start_saved_snapshot(self):
+        """Start only the read-only work justified by persisted UI preferences."""
+
+        if self._generation != 0 or self._mutation_in_progress:
+            return
+        target_path = self.target_edit.text().strip()
+        self._startup_catalog_path = self.catalog_edit.text().strip() or None
+        self._startup_autoload_candidates = bool(target_path)
+        if not target_path:
+            self._continue_saved_catalog_load()
+            return
+
+        resolved_target = Path(target_path).expanduser()
+        if not resolved_target.exists():
+            self.target_summary.setText(f"Saved target unavailable: {resolved_target}")
+            self.snapshot_summary.setText(
+                "Installed packages: not loaded | Extensions: not loaded | "
+                "Runtime verification: not run | Hardware/tensor: not run"
+            )
+            self.statusBar().showMessage("Saved target path is unavailable")
+            self._continue_saved_catalog_load()
+            return
+
+        self._bump_generation()
+        self._run(
+            "Read saved target snapshot",
+            lambda: self.service.prepare_target_snapshot(resolved_target),
+            self._commit_saved_snapshot,
+            error_callback=self._continue_saved_catalog_load,
+        )
+
+    def _continue_saved_catalog_load(self):
+        catalog_path = self._startup_catalog_path
+        self._startup_catalog_path = None
+        if not catalog_path:
+            self._startup_autoload_candidates = False
+            return
+        resolved_catalog = Path(catalog_path).expanduser()
+        if not resolved_catalog.is_file():
+            self.catalog_summary.setText(f"Saved local catalog unavailable: {resolved_catalog}")
+            self.statusBar().showMessage("Saved catalog path is unavailable")
+            self._startup_autoload_candidates = False
+            return
+        self._load_catalog(False, startup=True)
+
+    def _commit_saved_snapshot(self, result):
+        target, inventory, extension_report = result
+        self.service.commit_target(target)
+        self._display_target(target)
+        self._display_package_inventory(inventory)
+        if extension_report is not None:
+            self._display_extension_inventory(extension_report)
+        self.statusBar().showMessage("Saved target snapshot loaded")
+        self._continue_saved_catalog_load()
+
+    def _display_package_inventory(self, inventory):
+        values = inventory.as_dict()
+        core = {}
+        extensions = []
+        for package in values.get("packages", ()):
+            name = str(package.get("name") or "unknown")
+            normalized = name.casefold().replace("_", "-")
+            version = str(package.get("version") or "unknown")
+            if (
+                normalized in {"torch", "torchvision", "torchaudio", "rocm"}
+                or normalized.startswith(("rocm-sdk", "amd-torch-device", "amd-torchvision-device"))
+            ):
+                core[name] = version
+            elif package.get("compiled_files"):
+                extensions.append(f"{name}=={version}")
+        core_text = ", ".join(f"{name}=={version}" for name, version in sorted(core.items())) or "none detected"
+        extension_text = ", ".join(sorted(extensions)) or "none detected"
+        self.snapshot_summary.setText(
+            f"Installed packages: {core_text} | Extensions: {extension_text} | "
+            "Runtime verification: not run | Hardware/tensor: not run"
+        )
+        self.snapshot_summary.setToolTip(json.dumps(values, indent=2, sort_keys=True, default=str))
+        self._append_json({"target_package_inventory": values})
 
     def _browse_target(self):
         path = QtWidgets.QFileDialog.getExistingDirectory(self, "Select ComfyUI target")
@@ -221,6 +718,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.target_edit.setText(path)
 
     def _adapter_changed(self, adapter_name):
+        self._startup_catalog_path = None
+        self._startup_autoload_candidates = False
         self._bump_generation()
         self.service.set_adapter(adapter_name)
         self._reset_target_state()
@@ -241,7 +740,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._generation += 1
         return self._generation
 
-    def _run(self, label, function, callback, *, mutation=False):
+    def _run(self, label, function, callback, *, mutation=False, error_callback=None):
         generation = None if mutation else self._generation
         if mutation:
             self._set_mutation_locked(True)
@@ -255,7 +754,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         task.signals.failed.connect(
             lambda error: self._fail_task(
-                task, label, error, generation, mutation
+                task, label, error, generation, mutation, error_callback
             )
         )
         self.thread_pool.start(task)
@@ -298,7 +797,15 @@ class MainWindow(QtWidgets.QMainWindow):
                 return True
         return False
 
-    def _fail_task(self, task, label, error, generation=None, mutation=False):
+    def _fail_task(
+        self,
+        task,
+        label,
+        error,
+        generation=None,
+        mutation=False,
+        error_callback=None,
+    ):
         self._tasks.discard(task)
         if generation is not None and generation != self._generation:
             self.statusBar().showMessage(f"{label} error discarded (target changed)")
@@ -306,6 +813,8 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             self.statusBar().showMessage(f"{label} failed")
             self._show_error(error)
+            if error_callback is not None:
+                error_callback()
         finally:
             if mutation:
                 self._set_mutation_locked(False)
@@ -335,6 +844,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self._update_candidate_actions()
 
     def _detect(self):
+        self._startup_catalog_path = None
+        self._startup_autoload_candidates = False
         self._bump_generation()
         path = self.target_edit.text().strip() or "."
         self.service.clear_target()
@@ -351,13 +862,18 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _display_target_and_probe(self, target):
         self._display_target(target)
+        self._run(
+            "Read target package snapshot",
+            lambda: self.service.prepare_detected_target_snapshot(target),
+            self._display_detected_snapshot,
+        )
         self._run("Inspect runtime and hardware", self.service.inspect, self._display_inspection)
-        if getattr(self.service, "extension_capable", lambda: False)():
-            self._run(
-                "Inspect ComfyUI extensions",
-                self.service.extension_inventory,
-                self._display_extension_inventory,
-            )
+
+    def _display_detected_snapshot(self, result):
+        inventory, extension_report = result
+        self._display_package_inventory(inventory)
+        if extension_report is not None:
+            self._display_extension_inventory(extension_report)
 
     def _display_target(self, target):
         self._candidates = []
@@ -369,6 +885,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.target_summary.setText(
             f"Layout: {values['layout']} | Python: {values['python_executable'] or 'not found'} | "
             f"ComfyUI: {values['comfyui_dir']}"
+        )
+        self.snapshot_summary.setText(
+            "Installed packages: not loaded | Extensions: pending | "
+            "Runtime verification: available from Verify target | "
+            "Hardware/tensor: available from Verify target"
         )
         self.verify_button.setEnabled(True)
         self.restore_button.setEnabled(True)
@@ -386,6 +907,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.candidate_model.set_rows(())
         self.candidate_summary.setText("No candidates loaded")
         self.target_summary.setText(summary)
+        self.snapshot_summary.setText(
+            "Installed packages: not loaded | Extensions: not loaded | "
+            "Runtime verification: not run | Hardware/tensor: not run"
+        )
         self.verify_button.setEnabled(False)
         self.restore_button.setEnabled(False)
         self._update_candidate_actions()
@@ -411,6 +936,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self._set_gfx_placeholder("Detected GFX unavailable; enter manually")
             self.gfx_status.setText(f"{label}: no GFX; manual entry allowed")
         self.gfx_edit.blockSignals(False)
+        if label == "Host detected" and self._saved_gfx:
+            self.gfx_edit.setEditText(self._saved_gfx)
         host_platform = values.get("host_platform")
         if host_platform in {self.platform_combo.itemText(index) for index in range(self.platform_combo.count())}:
             self.platform_combo.setCurrentText(host_platform)
@@ -448,7 +975,7 @@ class MainWindow(QtWidgets.QMainWindow):
             }
         )
 
-    def _load_catalog(self, refresh):
+    def _load_catalog(self, refresh, *, startup=False):
         self._bump_generation()
         self.service.clear_catalog()
         self._candidates = []
@@ -461,14 +988,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self._run(
             "Load Matrix catalog",
             lambda: self.service.load_catalog(path, refresh=refresh),
-            self._commit_and_display_catalog,
+            lambda result: self._commit_and_display_catalog(result, startup=startup),
         )
 
-    def _commit_and_display_catalog(self, result):
+    def _commit_and_display_catalog(self, result, *, startup=False):
         self.service.commit_catalog(result)
-        self._display_catalog(result)
+        self._display_catalog(result, startup=startup)
 
-    def _display_catalog(self, result):
+    def _display_catalog(self, result, *, startup=False):
         _, state = result
         fetched = state.fetched_at or "unknown"
         artifacts = state.artifact_count if state.artifact_count is not None else "unknown"
@@ -501,11 +1028,30 @@ class MainWindow(QtWidgets.QMainWindow):
             }
         )
         if self.service.target is not None and getattr(self.service, "extension_capable", lambda: False)():
+            callback = self._display_extension_inventory
+            if startup:
+                callback = self._display_startup_extensions_and_candidates
             self._run(
                 "Refresh ComfyUI extensions",
                 self.service.extension_inventory,
-                self._display_extension_inventory,
+                callback,
             )
+        elif startup:
+            self._maybe_start_saved_candidates()
+
+    def _display_startup_extensions_and_candidates(self, report):
+        self._display_extension_inventory(report)
+        self._maybe_start_saved_candidates()
+
+    def _maybe_start_saved_candidates(self):
+        if not self._startup_autoload_candidates:
+            return
+        self._startup_autoload_candidates = False
+        if self.service.target is None or self.service.catalog is None:
+            return
+        if not self.gfx_edit.currentText().strip():
+            return
+        self._find_candidates()
 
     def _find_candidates(self):
         self._bump_generation()
@@ -657,6 +1203,7 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             for column, value in enumerate(values):
                 item = QtWidgets.QTableWidgetItem(str(value))
+                item.setToolTip(str(value))
                 if column == 0:
                     item.setData(QtCore.Qt.ItemDataRole.UserRole, extension.get("id"))
                     item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
