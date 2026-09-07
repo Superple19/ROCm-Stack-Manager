@@ -21,7 +21,7 @@ from .core.adapter import (
 from .core.catalog import CatalogError, ensure_catalog, iter_candidates, load_catalog
 from .core.backup import BackupError, load_backup, migrate_backup
 from .core.detection import TargetDetectionError
-from .core.hardware import detected_gfx_targets, normalize_gfx
+from .core.hardware import detected_gfx_targets, normalize_gfx, probe_hardware
 from .core.install import (
     InstallationError,
     InstallResult,
@@ -271,15 +271,22 @@ def _candidate_for_plan(catalog, args, python_tag):
 
 
 def _resolve_gfx(target, adapter, requested):
-    """Normalize an explicit GFX or infer one unambiguous target-local value."""
+    """Normalize an explicit GFX or infer one unambiguous host/target value."""
 
     if requested:
         normalized = normalize_gfx(requested)
         if normalized is None:
             raise ValueError(f"invalid GFX target: {requested}")
         return normalized, False
+    host_observation = probe_hardware(target)
+    host_detected = detected_gfx_targets(host_observation)
+    if len(host_detected) == 1:
+        return host_detected[0], True
+    if len(host_detected) > 1:
+        values = ", ".join(host_detected)
+        raise ValueError(f"multiple host GFX values detected ({values}); pass --gfx to choose one")
     if not isinstance(adapter, TargetProbeAdapter):
-        raise ValueError("GFX was not provided and this adapter cannot probe a target Python")
+        raise ValueError("GFX was not provided and no host or target probe is available")
     observation = adapter.verify(target)
     detected = detected_gfx_targets(observation)
     if len(detected) == 1:

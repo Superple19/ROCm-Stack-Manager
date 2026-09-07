@@ -47,6 +47,22 @@ class HardwareTests(unittest.TestCase):
         self.assertEqual(observation.driver_version, "7.15.26312")
         self.assertEqual(observation.tool, "hipInfo.exe")
 
+    def test_host_tool_probe_accepts_amd_smi(self):
+        completed = subprocess.CompletedProcess(
+            ["amd-smi.exe"],
+            0,
+            stdout="GPU[0] : gfx1201\n",
+            stderr="",
+        )
+        with patch(
+            "rocm_stack_manager.core.hardware._tool_candidates",
+            return_value=(Path("amd-smi.exe"),),
+        ), patch("rocm_stack_manager.core.hardware.subprocess.run", return_value=completed):
+            observation = probe_hardware()
+
+        self.assertEqual(observation.gfx_targets, ("gfx1201",))
+        self.assertEqual(observation.tool, "amd-smi.exe")
+
     def test_tool_probe_preserves_missing_tool_state(self):
         with patch("rocm_stack_manager.core.hardware._tool_candidates", return_value=()):
             observation = probe_hardware()
