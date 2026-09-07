@@ -41,7 +41,13 @@ def _host_platform():
 
 
 def _add_catalog_options(parser):
-    parser.add_argument("--catalog", type=Path, help="Optional local Matrix catalog.json or matrix.json")
+    catalog = parser.add_mutually_exclusive_group()
+    catalog.add_argument("--catalog", type=Path, help="Optional local Matrix catalog.json or matrix.json")
+    catalog.add_argument(
+        "--catalog-bundle",
+        type=Path,
+        help="Local Matrix catalog bundle ZIP or extracted bundle directory",
+    )
     parser.add_argument(
         "--catalog-url",
         default=None,
@@ -130,7 +136,13 @@ def parse_args(argv=None):
         default="report",
     )
     extensions.add_argument("--target", type=Path, required=True, help="Portable root or ComfyUI directory")
-    extensions.add_argument("--catalog", type=Path, help="Optional Matrix catalog.json for profile evidence")
+    catalog = extensions.add_mutually_exclusive_group()
+    catalog.add_argument("--catalog", type=Path, help="Optional Matrix catalog.json for profile evidence")
+    catalog.add_argument(
+        "--catalog-bundle",
+        type=Path,
+        help="Local Matrix catalog bundle ZIP or extracted bundle directory",
+    )
     extensions.add_argument(
         "--catalog-url",
         help="Matrix raw repository base URL (or ROCM_MATRIX_CATALOG_URL) used when catalog is omitted",
@@ -406,13 +418,14 @@ def main(argv=None):
 
             extension_profiles = {}
             catalog = None
-            needs_catalog = bool(args.catalog) or (
+            needs_catalog = bool(args.catalog or args.catalog_bundle) or (
                 not args.offline
                 and (args.action in {"report", "plan", "resolve", "verify", "apply"} or bool(args.candidate))
             )
             if needs_catalog:
                 catalog_path = ensure_catalog(
                     args.catalog,
+                    bundle_path=args.catalog_bundle,
                     base_url=args.catalog_url,
                     refresh=args.refresh_catalog,
                 )
@@ -608,6 +621,7 @@ def main(argv=None):
 
         catalog_path = ensure_catalog(
             args.catalog,
+            bundle_path=args.catalog_bundle,
             base_url=args.catalog_url,
             refresh=args.refresh_catalog,
         )

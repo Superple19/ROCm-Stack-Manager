@@ -42,6 +42,15 @@ the Matrix repository. Pass a local catalog for an offline or private setup:
   --channel stable
 ```
 
+Use a pinned Matrix bundle instead of a standalone catalog when available:
+
+```powershell
+.\.venv\Scripts\python.exe -m rocm_stack_manager candidates `
+  --target C:\path\to\ComfyUI_windows_portable `
+  --catalog-bundle C:\path\to\rocm-matrix-catalog-2026.09.07.zip `
+  --channel stable
+```
+
 Without `--catalog`, the first catalog command downloads the configured public
 snapshot into the platform cache. Use `ROCM_MATRIX_CATALOG_URL` for a trusted
 mirror. A failed download never replaces an existing cached snapshot.

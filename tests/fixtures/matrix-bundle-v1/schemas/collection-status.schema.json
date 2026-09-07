@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Superple19/rocm-evidence-matrix/schemas/collection-status.schema.json",
+  "title": "ROCm source collection status",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "distribution_family", "started_at", "completed_at", "results"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "distribution_family": {"enum": ["therock", "legacy", "external"]},
+    "started_at": {"type": "string", "format": "date-time"},
+    "completed_at": {"type": "string", "format": "date-time"},
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source_id", "status", "error"],
+        "properties": {
+          "source_id": {"type": "string"},
+          "url": {"type": "string", "format": "uri"},
+          "status": {"enum": ["passed", "failed"]},
+          "observed_at": {"type": "string", "format": "date-time"},
+          "error": {"type": ["string", "null"]},
+          "details": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "url": {"type": "string", "format": "uri"},
+              "key": {"type": "string"},
+              "pages_fetched": {"type": "integer", "minimum": 0},
+              "items_fetched": {"type": "integer", "minimum": 0},
+              "max_pages": {"type": "integer", "minimum": 1},
+              "truncated": {"type": "boolean"},
+              "reason": {"enum": ["page_fetch_failed", "invalid_payload", "pagination_limit"]},
+              "source_status": {"enum": ["fresh", "revalidated", "cached", "not_cached"]},
+              "cache_age_seconds": {"type": ["integer", "null"], "minimum": 0}
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -42,5 +42,12 @@ class AdapterContractTests(unittest.TestCase):
             ["candidates", "--target", "target", "--gfx", "gfx1201"]
         )
         self.assertIsNone(args.catalog)
+        self.assertIsNone(args.catalog_bundle)
         self.assertIsNone(args.catalog_url)
         self.assertFalse(args.refresh_catalog)
+
+    def test_candidate_cli_accepts_catalog_bundle(self):
+        args = parse_args(["candidates", "--target", "target", "--catalog-bundle", "bundle.zip"])
+
+        self.assertEqual(args.catalog_bundle, Path("bundle.zip"))
+        self.assertIsNone(args.catalog)

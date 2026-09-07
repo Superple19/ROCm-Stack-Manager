@@ -7,14 +7,17 @@ from pathlib import Path
 import re
 import shutil
 import tempfile
+import zipfile
 from datetime import datetime, timezone
 from urllib.error import URLError, HTTPError
 from urllib.request import Request, urlopen
 from urllib.parse import unquote
 
+from .. import __version__
 from .profile import ProfileError, evaluate_candidate, load_profile
 from .identity import candidate_hash
 from .platforms import SUPPORTED_PLATFORMS
+from packaging.version import InvalidVersion, Version
 
 
 class CatalogError(ValueError):
@@ -30,6 +33,16 @@ DEFAULT_MATRIX_REVISION_URL = (
 DEFAULT_MATRIX_RAW_REVISION_URL = "https://raw.githubusercontent.com/Superple19/rocm-evidence-matrix"
 MATRIX_CATALOG_URL_ENV = "ROCM_MATRIX_CATALOG_URL"
 _SHA256_LENGTH = 64
+BUNDLE_CONTRACT_VERSION = 1
+BUNDLE_MANIFEST_PATH = "manifest.json"
+BUNDLE_MANIFEST_SCHEMA_PATH = "schemas/catalog-bundle.schema.json"
+REQUIRED_BUNDLE_ARTIFACT_IDS = {
+    "catalog",
+    "compatibility_matrix",
+    "package_history",
+    "extension_catalog",
+    "comfyui_profile",
+}
 
 
 def _canonical_artifact_bytes(path):
@@ -159,6 +172,137 @@ def _validate_cached_bundle(catalog_path):
     _validate_matrix_document(_read_json(root / _safe_relative_path(matrix_artifact["path"])))
 
 
+def _validate_bundle_manifest(root, manifest, schema=None):
+    if not isinstance(manifest, dict):
+        raise CatalogError("Matrix bundle manifest must be a JSON object")
+    required = {
+        "bundle_version",
+        "contract_version",
+        "matrix_commit",
+        "generated_at",
+        "artifacts",
+        "manager_compatibility",
+    }
+    if not required.issubset(manifest):
+        raise CatalogError("Matrix bundle manifest is missing required fields")
+    if manifest["contract_version"] != BUNDLE_CONTRACT_VERSION:
+        raise CatalogError(f"unsupported Matrix bundle contract: {manifest['contract_version']!r}")
+    if not re.fullmatch(r"\d{4}\.\d{2}\.\d{2}", str(manifest["bundle_version"])):
+        raise CatalogError("Matrix bundle version is invalid")
+    if not re.fullmatch(r"[0-9a-f]{40}", str(manifest["matrix_commit"])):
+        raise CatalogError("Matrix bundle commit is not a full Git SHA")
+    try:
+        datetime.fromisoformat(str(manifest["generated_at"]).replace("Z", "+00:00"))
+    except ValueError as error:
+        raise CatalogError("Matrix bundle generated_at is not an ISO-8601 timestamp") from error
+    compatibility = manifest["manager_compatibility"]
+    minimum = compatibility.get("min") if isinstance(compatibility, dict) else None
+    try:
+        if Version(__version__) < Version(str(minimum)):
+            raise CatalogError(f"Matrix bundle requires Manager {minimum} or newer")
+    except InvalidVersion as error:
+        raise CatalogError("Matrix bundle manager compatibility is invalid") from error
+    artifacts = manifest["artifacts"]
+    if not isinstance(artifacts, list):
+        raise CatalogError("Matrix bundle manifest has no artifact list")
+    ids = set()
+    paths = set()
+    for artifact in artifacts:
+        if not isinstance(artifact, dict):
+            raise CatalogError("Matrix bundle contains an invalid artifact entry")
+        artifact_id = artifact.get("id")
+        relative = _safe_relative_path(artifact.get("path"))
+        digest = artifact.get("sha256")
+        if not isinstance(artifact_id, str) or not artifact_id:
+            raise CatalogError("Matrix bundle artifact has no ID")
+        if not isinstance(artifact.get("schema_version"), int):
+            raise CatalogError(f"Matrix bundle artifact has no schema version: {artifact_id}")
+        if not _is_sha256(digest):
+            raise CatalogError(f"Matrix bundle artifact has no valid SHA-256: {artifact_id}")
+        relative_key = relative.as_posix()
+        if artifact_id in ids or relative_key in paths:
+            raise CatalogError("Matrix bundle contains duplicate artifact IDs or paths")
+        ids.add(artifact_id)
+        paths.add(relative_key)
+    if not REQUIRED_BUNDLE_ARTIFACT_IDS.issubset(ids):
+        raise CatalogError("Matrix bundle is missing a required artifact")
+    if schema is None:
+        schema = _read_json(root / BUNDLE_MANIFEST_SCHEMA_PATH)
+    if not isinstance(schema, dict):
+        raise CatalogError("Matrix bundle manifest schema must be a JSON object")
+    if schema.get("properties", {}).get("contract_version", {}).get("const") != BUNDLE_CONTRACT_VERSION:
+        raise CatalogError("Matrix bundle manifest schema does not describe contract v1")
+    return artifacts
+
+
+def _verify_bundle_directory(root):
+    root = Path(root).expanduser().resolve()
+    manifest = _read_json(root / BUNDLE_MANIFEST_PATH)
+    artifacts = _validate_bundle_manifest(root, manifest)
+    expected = {BUNDLE_MANIFEST_PATH, BUNDLE_MANIFEST_SCHEMA_PATH}
+    expected.update(artifact["path"] for artifact in artifacts)
+    actual = {path.relative_to(root).as_posix() for path in root.rglob("*") if path.is_file()}
+    if actual != expected:
+        raise CatalogError("Matrix bundle files do not match its manifest")
+    for artifact in artifacts:
+        path = root / _safe_relative_path(artifact["path"])
+        if hashlib.sha256(_canonical_artifact_bytes(path)).hexdigest() != artifact["sha256"]:
+            raise CatalogError(f"Matrix bundle artifact hash mismatch: {artifact['id']}")
+    catalog_path = root / "data" / "catalog.json"
+    _validate_cached_bundle(catalog_path)
+    return catalog_path
+
+
+def _verify_bundle_archive(path, cache_dir=None):
+    path = Path(path).expanduser().resolve()
+    try:
+        with zipfile.ZipFile(path) as archive:
+            names = archive.namelist()
+            if len(names) != len(set(names)):
+                raise CatalogError("Matrix bundle contains duplicate ZIP entries")
+            safe_names = {_safe_relative_path(name).as_posix() for name in names}
+            manifest = json.loads(archive.read(BUNDLE_MANIFEST_PATH).decode("utf-8"))
+            schema = json.loads(archive.read(BUNDLE_MANIFEST_SCHEMA_PATH).decode("utf-8"))
+            artifacts = _validate_bundle_manifest(None, manifest, schema=schema)
+            expected = {BUNDLE_MANIFEST_PATH, BUNDLE_MANIFEST_SCHEMA_PATH}
+            expected.update(artifact["path"] for artifact in artifacts)
+            if safe_names != expected:
+                raise CatalogError("Matrix bundle ZIP files do not match its manifest")
+            for artifact in artifacts:
+                content = archive.read(artifact["path"])
+                if hashlib.sha256(content).hexdigest() != artifact["sha256"]:
+                    raise CatalogError(f"Matrix bundle artifact hash mismatch: {artifact['id']}")
+            bundle_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+            cache_root = Path(cache_dir).expanduser().resolve() if cache_dir else default_catalog_cache_dir()
+            destination = cache_root / "bundles" / bundle_hash
+            if destination.is_dir():
+                return _verify_bundle_directory(destination)
+            staging_parent = cache_root / "bundles"
+            staging_parent.mkdir(parents=True, exist_ok=True)
+            staging = Path(tempfile.mkdtemp(prefix=".bundle-", dir=str(staging_parent)))
+            try:
+                for name in sorted(expected):
+                    target = staging / _safe_relative_path(name)
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(archive.read(name))
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(staging, destination)
+            finally:
+                shutil.rmtree(staging, ignore_errors=True)
+            return _verify_bundle_directory(destination)
+    except (OSError, zipfile.BadZipFile, KeyError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise CatalogError(f"cannot read Matrix catalog bundle: {path}") from error
+
+
+def _ensure_local_bundle(path, cache_dir=None):
+    path = Path(path).expanduser().resolve()
+    if path.is_dir():
+        return _verify_bundle_directory(path)
+    if path.is_file():
+        return _verify_bundle_archive(path, cache_dir=cache_dir)
+    raise CatalogError(f"Matrix catalog bundle does not exist: {path}")
+
+
 def default_catalog_cache_dir():
     """Return the per-user cache directory for the fetched Matrix snapshot."""
 
@@ -222,7 +366,7 @@ def _safe_relative_path(value):
     if not isinstance(value, str) or not value or "\\" in value:
         raise CatalogError("Matrix catalog contains an invalid artifact path")
     relative = Path(value)
-    if relative.is_absolute() or ".." in relative.parts:
+    if relative.is_absolute() or not relative.parts or any(part in {".", ".."} for part in relative.parts):
         raise CatalogError(f"Matrix catalog contains an unsafe artifact path: {value}")
     return relative
 
@@ -230,6 +374,7 @@ def _safe_relative_path(value):
 def ensure_catalog(
     path=None,
     *,
+    bundle_path=None,
     cache_dir=None,
     base_url=None,
     refresh=False,
@@ -241,6 +386,10 @@ def ensure_catalog(
     it references, and the ComfyUI profiles into a per-user cache.
     """
 
+    if path is not None and bundle_path is not None:
+        raise CatalogError("--catalog and --catalog-bundle cannot be used together")
+    if bundle_path is not None:
+        return _ensure_local_bundle(bundle_path, cache_dir=cache_dir)
     if path is not None:
         return Path(path).expanduser().resolve()
 
