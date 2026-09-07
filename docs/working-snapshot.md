@@ -51,13 +51,23 @@ Use a pinned Matrix bundle instead of a standalone catalog when available:
   --channel stable
 ```
 
-Without `--catalog`, the first catalog command downloads the configured public
-snapshot into the platform cache. Use `ROCM_MATRIX_CATALOG_URL` for a trusted
-mirror. A failed download never replaces an existing cached snapshot.
-Local and cached catalog files are always SHA-256-bound to plans. Validated
-Matrix collection-status artifacts supply the UI's failed-source list; when a
-direct matrix file has no status artifacts, the UI reports that state as
-unknown.
+For a remote release asset, use an exact versioned ZIP URL:
+
+```powershell
+.\.venv\Scripts\python.exe -m rocm_stack_manager candidates `
+  --target C:\path\to\ComfyUI_windows_portable `
+  --catalog-url https://github.com/Superple19/rocm-evidence-matrix/releases/download/catalog-2026.09.07/rocm-matrix-catalog-2026.09.07.zip `
+  --channel stable
+```
+
+Without `--catalog` or `--catalog-bundle`, use `--catalog-url` with a
+version-pinned Matrix Release bundle asset, or set
+`ROCM_MATRIX_CATALOG_URL`. The Manager verifies the ZIP before placing it in
+the platform cache. A failed download or validation never replaces an existing
+verified bundle. Local and cached catalog files are always SHA-256-bound to
+plans. Validated Matrix collection-status artifacts supply the UI's
+failed-source list; when a direct matrix file has no status artifacts, the UI
+reports that state as unknown.
 
 ## Safe core flow
 
@@ -146,8 +156,8 @@ Extensions are independent from core ROCm/Torch packages:
 .\.venv\Scripts\python.exe -m rocm_stack_manager extensions verify --target C:\path\to\target --catalog C:\path\to\catalog.json --candidate <candidate-id> --extension bitsandbytes --output evidence.json
 ```
 
-`report` loads the public Matrix catalog automatically and combines it with
-local inventory. Add `--offline` for local inventory only. `plan` is read-only
+`report` uses a configured or cached verified Matrix bundle and combines it
+with local inventory. Add `--offline` for local inventory only. `plan` is read-only
 and emits an install command only when exact source, ABI, platform, GFX, and
 Matrix evidence agree.
 `resolve` is a targeted `pip --dry-run`; it never installs or promotes an
@@ -196,8 +206,9 @@ and confirmation steps succeed.
 
 - `target GFX was not detected`: pass `--gfx` explicitly; no GPU name is used
   to infer a GFX target.
-- `cannot fetch Matrix catalog source`: use `--catalog` for a local snapshot or
-  set `ROCM_MATRIX_CATALOG_URL` to a reachable mirror.
+- `cannot fetch Matrix catalog source`: use `--catalog` or `--catalog-bundle` for
+  a local snapshot, or set `ROCM_MATRIX_CATALOG_URL` to a reachable versioned
+  Release asset or trusted HTTPS mirror.
 - `artifact-only`: the Matrix recorded an artifact but no safe install source;
   it is visible for provenance and cannot produce an install command.
 - `resolver_failed` or `unverified`: inspect the warning and run a targeted

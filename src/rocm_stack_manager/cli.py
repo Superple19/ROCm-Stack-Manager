@@ -51,7 +51,7 @@ def _add_catalog_options(parser):
     parser.add_argument(
         "--catalog-url",
         default=None,
-        help="Matrix raw repository base URL (or ROCM_MATRIX_CATALOG_URL) used when --catalog is omitted",
+        help="Version-pinned Matrix Release bundle ZIP URL (or ROCM_MATRIX_CATALOG_URL)",
     )
     parser.add_argument(
         "--refresh-catalog",
@@ -145,7 +145,7 @@ def parse_args(argv=None):
     )
     extensions.add_argument(
         "--catalog-url",
-        help="Matrix raw repository base URL (or ROCM_MATRIX_CATALOG_URL) used when catalog is omitted",
+        help="Version-pinned Matrix Release bundle ZIP URL (or ROCM_MATRIX_CATALOG_URL)",
     )
     extensions.add_argument("--refresh-catalog", action="store_true")
     extensions.add_argument(
