@@ -272,7 +272,8 @@ class BackupAndApplyTests(unittest.TestCase):
             plan = build_restore_plan(self._target(root / "target"), backup)
 
             self.assertEqual(backup.restore_mode, "network_version_pinned")
-            self.assertIn(str(requirements_path), plan.command)
+            requirement_argument = Path(plan.command[plan.command.index("--requirement") + 1])
+            self.assertTrue(requirement_argument.samefile(requirements_path))
             self.assertNotIn("--no-index", plan.command)
             self.assertTrue(any("network restore" in warning for warning in plan.warnings))
 
@@ -456,7 +457,7 @@ class BackupAndApplyTests(unittest.TestCase):
             )
             backup = load_backup(backup_path, allow_network_restore=True)
 
-            self.assertEqual(backup.requirements_path, root / "recorded.txt")
+            self.assertTrue(backup.requirements_path.samefile(root / "recorded.txt"))
 
     def test_load_backup_rejects_external_requirements_path(self):
         with tempfile.TemporaryDirectory() as directory:
