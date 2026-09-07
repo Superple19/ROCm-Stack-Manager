@@ -122,39 +122,36 @@ runtime compatibility.
 The `--rocm` filter includes historical candidates when the Matrix catalog has
 preserved their complete artifact evidence. A historical version is not shown
 as installable merely because a release name exists in documentation.
-When `--catalog` is omitted, the first command that needs Matrix data fetches
-the official generated catalog and referenced evidence files from
-`rocm-evidence-matrix` into a per-user cache. On Windows the default cache is
+When `--catalog` and `--catalog-bundle` are omitted, Matrix data is read from
+a verified per-user cache. On Windows the default cache is
 `%LOCALAPPDATA%\rocm-stack-manager\matrix`; on Linux it is
-`~/.cache/rocm-stack-manager/matrix` (or `$XDG_CACHE_HOME`). Later commands
-reuse that snapshot. Use `--refresh-catalog` to request a new snapshot, or
-pass `--catalog` for a fully offline local file. `--catalog-url` is available
-for a trusted mirror or a local test server. The same source can be configured
-with `ROCM_MATRIX_CATALOG_URL`; when `--gfx` is omitted, a single GFX target
-reported by the selected target Python is used automatically. Multiple or
-undetected targets require an explicit `--gfx` value.
+`~/.cache/rocm-stack-manager/matrix` (or `$XDG_CACHE_HOME`). To populate or
+refresh that cache, pass `--catalog-url` with a version-pinned Matrix Release
+bundle asset, or set `ROCM_MATRIX_CATALOG_URL`. The URL must point to a
+versioned ZIP, not `main` or `latest`. A failed download or validation never
+replaces an existing verified bundle. Use `--catalog` for a fully offline JSON
+file. When `--gfx` is omitted, a single GFX target reported by the selected
+target Python is used automatically; multiple or undetected targets require an
+explicit `--gfx` value.
 For a pinned Matrix release bundle, pass `--catalog-bundle` with either the
 ZIP asset or an extracted bundle directory. The Manager verifies its manifest,
 contract version, artifact paths, compatibility, and SHA-256 digests before
 loading `data/catalog.json`.
 
-Automatic catalog fetch requires the configured Matrix source to be reachable
-and publicly readable. If it is unavailable, use `--catalog` with a local
-Matrix checkout or set `ROCM_MATRIX_CATALOG_URL` to a trusted mirror.
-For the default GitHub source, the manager resolves `main` to a commit SHA
-before downloading the catalog so each cached snapshot uses an immutable raw
-revision; the resolved revision is recorded in the cache manifest.
-Every local or cached catalog is bound to plans by the SHA-256 of the selected
-catalog file. The UI also reads validated `collection_status:*` artifacts and
-shows failed source IDs; a snapshot without those artifacts reports the source
-failure state as unknown rather than zero.
+Remote bundle loading requires the configured Release asset or trusted HTTPS
+mirror to be reachable and publicly readable. If it is unavailable, use
+`--catalog` or `--catalog-bundle` with a local source. Every local or cached
+catalog is bound to plans by the SHA-256 of the selected catalog file. The UI
+also reads validated `collection_status:*` artifacts and shows failed source
+IDs; a snapshot without those artifacts reports the source failure state as
+unknown rather than zero.
 
 The `inventory` command reads installed distributions from the selected target
 Python and classifies them against one candidate. Compiled extensions without
 matching evidence remain `unknown`; they are never assumed compatible.
 The `extensions` command reports known ComfyUI extensions from local inventory
-and Matrix-observed artifact versions and target wheel-tag matches. It loads
-the public Matrix catalog automatically unless `--offline` is provided. It
+and Matrix-observed artifact versions and target wheel-tag matches. It uses a
+configured or cached verified Matrix bundle unless `--offline` is provided. It
 does not contact package hosts for extension artifacts, install extensions, or
 treat an installed extension as compatible without ABI/runtime evidence.
 `not_collected`, `artifact_available`, and compatibility evidence remain

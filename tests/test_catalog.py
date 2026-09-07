@@ -1,12 +1,13 @@
+import io
 import json
 import hashlib
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
 from rocm_stack_manager.core.catalog import (
-    DEFAULT_MATRIX_REVISION_URL,
     MATRIX_CATALOG_URL_ENV,
     CatalogError,
     ensure_catalog,
@@ -15,6 +16,18 @@ from rocm_stack_manager.core.catalog import (
 )
 from rocm_stack_manager.core.detection import detect_target
 from rocm_stack_manager.core.planning import PlanningError, build_plan
+
+
+BUNDLE_FIXTURE = Path(__file__).parent / "fixtures" / "matrix-bundle-v1"
+
+
+def _bundle_bytes():
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_STORED) as archive:
+        for path in sorted(BUNDLE_FIXTURE.rglob("*")):
+            if path.is_file():
+                archive.writestr(path.relative_to(BUNDLE_FIXTURE).as_posix(), path.read_bytes())
+    return buffer.getvalue()
 
 
 def _matrix(*, include_history=True):
@@ -99,61 +112,50 @@ def _matrix(*, include_history=True):
 
 
 class CatalogTests(unittest.TestCase):
-    def test_automatic_catalog_fetch_populates_cache(self):
-        matrix_bytes = json.dumps(_matrix()).encode("utf-8")
-        document = {
-            "schema_version": 1,
-            "artifacts": [{"id": "compatibility_matrix", "path": "data/matrix.json", "schema": "schemas/compatibility-matrix.schema.json", "schema_version": 1, "sha256": hashlib.sha256(matrix_bytes).hexdigest()}],
-        }
-        responses = {
-            "https://matrix.test/data/catalog.json": json.dumps(document).encode("utf-8"),
-            "https://matrix.test/data/matrix.json": matrix_bytes,
-        }
-
-        def download(url):
-            if url in responses:
-                return responses[url]
-            raise CatalogError(f"optional source missing: {url}")
-
-        with tempfile.TemporaryDirectory() as directory:
-            with patch("rocm_stack_manager.core.catalog._download_bytes", side_effect=download) as fetch:
-                path = ensure_catalog(None, cache_dir=Path(directory) / "cache", base_url="https://matrix.test")
-                first_fetch_count = fetch.call_count
-                cached_again = ensure_catalog(
-                    None,
-                    cache_dir=Path(directory) / "cache",
-                    base_url="https://matrix.test",
-                )
-
-            self.assertEqual(path, cached_again)
-            self.assertTrue(path.is_file())
-            self.assertTrue((path.parent / "matrix.json").is_file())
-            self.assertTrue((Path(directory) / "cache" / "source-manifest.json").is_file())
-            self.assertTrue((Path(directory) / "cache" / "current.json").is_file())
-            self.assertGreaterEqual(first_fetch_count, 2)
-            self.assertEqual(fetch.call_count, first_fetch_count)
-
-    def test_corrupt_cached_artifact_is_replaced(self):
-        matrix_bytes = json.dumps(_matrix()).encode("utf-8")
-        document = {
-            "schema_version": 1,
-            "artifacts": [{"id": "compatibility_matrix", "path": "data/matrix.json", "schema": "schemas/compatibility-matrix.schema.json", "schema_version": 1, "sha256": hashlib.sha256(matrix_bytes).hexdigest()}],
-        }
-        responses = {
-            "https://matrix.test/data/catalog.json": json.dumps(document).encode("utf-8"),
-            "https://matrix.test/data/matrix.json": matrix_bytes,
-        }
-
+    def test_release_bundle_download_populates_and_reuses_cache(self):
+        bundle = _bundle_bytes()
+        url = "https://matrix.test/releases/download/catalog-2026.09.07/catalog.zip"
         with tempfile.TemporaryDirectory() as directory:
             cache_root = Path(directory) / "cache"
-            with patch("rocm_stack_manager.core.catalog._download_bytes", side_effect=lambda url: responses[url]):
-                path = ensure_catalog(None, cache_dir=cache_root, base_url="https://matrix.test")
-            (path.parent / "matrix.json").write_bytes(b"corrupt")
-            with patch("rocm_stack_manager.core.catalog._download_bytes", side_effect=lambda url: responses[url]) as fetch:
-                repaired = ensure_catalog(None, cache_dir=cache_root, base_url="https://matrix.test")
+            with patch("rocm_stack_manager.core.catalog._download_bytes", return_value=bundle) as fetch:
+                first = ensure_catalog(None, cache_dir=cache_root, base_url=url)
+                second = ensure_catalog(None, cache_dir=cache_root, base_url=url)
 
-            self.assertEqual((repaired.parent / "matrix.json").read_bytes(), matrix_bytes)
-            self.assertGreaterEqual(fetch.call_count, 2)
+            self.assertEqual(first, second)
+            self.assertEqual(fetch.call_count, 1)
+            pointer = json.loads((cache_root / "bundle-current.json").read_text(encoding="utf-8"))
+            self.assertEqual(pointer["source"], url)
+            self.assertEqual(pointer["bundle_version"], "2026.09.07")
+            self.assertTrue((cache_root / pointer["path"] / "manifest.json").is_file())
+            self.assertTrue(load_catalog(first)["_comfyui_profile"])
+
+    def test_refresh_failure_preserves_verified_bundle_cache(self):
+        bundle = _bundle_bytes()
+        url = "https://matrix.test/releases/download/catalog-2026.09.07/catalog.zip"
+        with tempfile.TemporaryDirectory() as directory:
+            cache_root = Path(directory) / "cache"
+            with patch("rocm_stack_manager.core.catalog._download_bytes", return_value=bundle):
+                first = ensure_catalog(None, cache_dir=cache_root, base_url=url)
+            pointer_before = (cache_root / "bundle-current.json").read_bytes()
+            with patch(
+                "rocm_stack_manager.core.catalog._download_bytes",
+                side_effect=CatalogError("temporary network failure"),
+            ):
+                with self.assertRaises(CatalogError):
+                    ensure_catalog(None, cache_dir=cache_root, base_url=url, refresh=True)
+
+            self.assertEqual((cache_root / "bundle-current.json").read_bytes(), pointer_before)
+            self.assertEqual(ensure_catalog(None, cache_dir=cache_root), first)
+
+    def test_invalid_remote_bundle_does_not_create_cache(self):
+        url = "https://matrix.test/releases/download/catalog-2026.09.07/catalog.zip"
+        with tempfile.TemporaryDirectory() as directory:
+            cache_root = Path(directory) / "cache"
+            with patch("rocm_stack_manager.core.catalog._download_bytes", return_value=b"not a zip"):
+                with self.assertRaises(CatalogError):
+                    ensure_catalog(None, cache_dir=cache_root, base_url=url)
+
+            self.assertFalse((cache_root / "bundle-current.json").exists())
 
     def test_explicit_catalog_never_fetches(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -165,96 +167,27 @@ class CatalogTests(unittest.TestCase):
             self.assertEqual(resolved, path.resolve())
             fetch.assert_not_called()
 
-    def test_default_source_is_used_when_base_url_is_none(self):
-        matrix_bytes = json.dumps(_matrix()).encode("utf-8")
-        revision = "a" * 40
-        revision_base = f"https://raw.githubusercontent.com/Superple19/rocm-evidence-matrix/{revision}"
-        document = {
-            "schema_version": 1,
-            "artifacts": [{"id": "compatibility_matrix", "path": "data/matrix.json", "schema": "schemas/compatibility-matrix.schema.json", "schema_version": 1, "sha256": hashlib.sha256(matrix_bytes).hexdigest()}],
-        }
-        responses = {
-            DEFAULT_MATRIX_REVISION_URL: json.dumps({"sha": revision}).encode("utf-8"),
-            f"{revision_base}/data/catalog.json": json.dumps(document).encode("utf-8"),
-            f"{revision_base}/data/matrix.json": matrix_bytes,
-        }
-
-        def download(url):
-            if url in responses:
-                return responses[url]
-            raise CatalogError(f"optional source missing: {url}")
-
+    def test_no_source_does_not_fetch_moving_main(self):
         with tempfile.TemporaryDirectory() as directory:
-            with patch(
-                "rocm_stack_manager.core.catalog._download_bytes",
-                side_effect=download,
-            ) as fetch:
-                path = ensure_catalog(
-                    None,
-                    cache_dir=Path(directory) / "cache",
-                    base_url=None,
-                )
-                self.assertTrue(path.is_file())
-                manifest = json.loads((Path(directory) / "cache" / "source-manifest.json").read_text(encoding="utf-8"))
-                self.assertEqual(manifest["revision"], revision)
-                self.assertIn(f"{DEFAULT_MATRIX_REVISION_URL}", [call.args[0] for call in fetch.call_args_list])
-                self.assertIn(f"{revision_base}/data/catalog.json", [call.args[0] for call in fetch.call_args_list])
+            with patch("rocm_stack_manager.core.catalog._download_bytes") as fetch:
+                with self.assertRaises(CatalogError):
+                    ensure_catalog(None, cache_dir=Path(directory) / "cache")
+
+            fetch.assert_not_called()
 
     def test_environment_source_overrides_default(self):
-        matrix_bytes = json.dumps(_matrix()).encode("utf-8")
-        document = {"artifacts": [{"id": "compatibility_matrix", "path": "data/matrix.json", "schema": "schemas/compatibility-matrix.schema.json", "schema_version": 1, "sha256": hashlib.sha256(matrix_bytes).hexdigest()}], "schema_version": 1}
+        bundle = _bundle_bytes()
+        url = "https://matrix.test/releases/download/catalog-2026.09.07/catalog.zip"
         with tempfile.TemporaryDirectory() as directory, patch.dict(
-            "os.environ", {MATRIX_CATALOG_URL_ENV: "https://mirror.test/matrix"}
+            "os.environ", {MATRIX_CATALOG_URL_ENV: url}
         ):
             with patch(
                 "rocm_stack_manager.core.catalog._download_bytes",
-                side_effect=[json.dumps(document).encode("utf-8"), matrix_bytes],
+                return_value=bundle,
             ) as fetch:
                 ensure_catalog(None, cache_dir=Path(directory) / "cache", base_url=None)
 
-            self.assertEqual(
-                fetch.call_args_list[0].args[0],
-                "https://mirror.test/matrix/data/catalog.json",
-            )
-
-    def test_refresh_failure_preserves_existing_cache(self):
-        document = {"artifacts": [], "schema_version": 1}
-
-        with tempfile.TemporaryDirectory() as directory:
-            cache_root = Path(directory) / "cache"
-            catalog_path = cache_root / "data" / "catalog.json"
-            catalog_path.parent.mkdir(parents=True)
-            catalog_path.write_text(json.dumps(document), encoding="utf-8")
-            with patch(
-                "rocm_stack_manager.core.catalog._download_bytes",
-                side_effect=CatalogError("temporary network failure"),
-            ):
-                with self.assertRaises(CatalogError):
-                    ensure_catalog(None, cache_dir=cache_root, refresh=True)
-
-            self.assertEqual(json.loads(catalog_path.read_text(encoding="utf-8")), document)
-
-    def test_rejects_catalog_path_traversal(self):
-        document = {"artifacts": [{"id": "bad", "path": "../outside.json"}]}
-
-        with tempfile.TemporaryDirectory() as directory:
-            responses = {
-                "https://matrix.test/data/catalog.json": json.dumps(document).encode("utf-8"),
-            }
-
-            def download(url):
-                return responses[url]
-
-            with patch(
-                "rocm_stack_manager.core.catalog._download_bytes",
-                side_effect=download,
-            ):
-                with self.assertRaises(CatalogError):
-                    ensure_catalog(
-                        None,
-                        cache_dir=Path(directory) / "cache",
-                        base_url="https://matrix.test",
-                    )
+            self.assertEqual(fetch.call_args.args[0], url)
 
     def test_loads_matrix_from_catalog_index(self):
         with tempfile.TemporaryDirectory() as directory:

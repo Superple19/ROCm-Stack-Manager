@@ -24,18 +24,12 @@ class CatalogError(ValueError):
     """Raised when a Matrix catalog cannot be loaded or interpreted."""
 
 
-DEFAULT_MATRIX_RAW_BASE_URL = (
-    "https://raw.githubusercontent.com/Superple19/rocm-evidence-matrix/main"
-)
-DEFAULT_MATRIX_REVISION_URL = (
-    "https://api.github.com/repos/Superple19/rocm-evidence-matrix/commits/main"
-)
-DEFAULT_MATRIX_RAW_REVISION_URL = "https://raw.githubusercontent.com/Superple19/rocm-evidence-matrix"
 MATRIX_CATALOG_URL_ENV = "ROCM_MATRIX_CATALOG_URL"
 _SHA256_LENGTH = 64
 BUNDLE_CONTRACT_VERSION = 1
 BUNDLE_MANIFEST_PATH = "manifest.json"
 BUNDLE_MANIFEST_SCHEMA_PATH = "schemas/catalog-bundle.schema.json"
+BUNDLE_CACHE_POINTER = "bundle-current.json"
 REQUIRED_BUNDLE_ARTIFACT_IDS = {
     "catalog",
     "compatibility_matrix",
@@ -114,33 +108,32 @@ def _validate_matrix_document(document):
                     raise CatalogError(f"compatibility matrix has invalid availability for {target['gfx']} / {channel}")
 
 
-def _cached_catalog_path(cache_root):
-    pointer_path = cache_root / "current.json"
-    candidates = []
-    if pointer_path.is_file():
-        try:
-            pointer = _read_json(pointer_path)
-            if pointer.get("schema_version") != 1:
-                raise CatalogError("unsupported Matrix cache pointer")
-            snapshot = _safe_relative_path(pointer.get("snapshot"))
-            catalog_path = cache_root / snapshot / "data" / "catalog.json"
-            expected_hash = pointer.get("catalog_sha256")
-            if not _is_sha256(expected_hash):
-                raise CatalogError("Matrix cache pointer has no catalog hash")
-            if catalog_path.is_file() and hashlib.sha256(catalog_path.read_bytes()).hexdigest() == expected_hash:
-                candidates.append(catalog_path)
-        except CatalogError:
-            pass
-    candidates.append(cache_root / "data" / "catalog.json")
-    for candidate in candidates:
-        if not candidate.is_file():
-            continue
-        try:
-            _validate_cached_bundle(candidate)
-        except CatalogError:
-            continue
-        return candidate
-    return None
+def _cached_bundle_path(cache_root):
+    pointer_path = cache_root / BUNDLE_CACHE_POINTER
+    if not pointer_path.is_file():
+        return None
+    try:
+        pointer = _read_json(pointer_path)
+        if not isinstance(pointer, dict):
+            raise CatalogError("Matrix bundle cache pointer must be an object")
+        if pointer.get("schema_version") != 1:
+            raise CatalogError("unsupported Matrix bundle cache pointer")
+        bundle_hash = pointer.get("bundle_sha256")
+        if not _is_sha256(bundle_hash):
+            raise CatalogError("Matrix bundle cache pointer has no bundle hash")
+        relative = _safe_relative_path(pointer.get("path"))
+        if relative.parts[:1] != ("bundles",) or relative.name != bundle_hash:
+            raise CatalogError("Matrix bundle cache pointer has an invalid path")
+        root = (cache_root / relative).resolve()
+        root.relative_to((cache_root / "bundles").resolve())
+        manifest = _read_json(root / BUNDLE_MANIFEST_PATH)
+        if not isinstance(manifest, dict):
+            raise CatalogError("Matrix bundle manifest must be an object")
+        if manifest.get("bundle_version") != pointer.get("bundle_version"):
+            raise CatalogError("Matrix bundle cache pointer version mismatch")
+        return _verify_bundle_directory(root)
+    except (CatalogError, OSError, ValueError):
+        return None
 
 
 def _validate_cached_bundle(catalog_path):
@@ -280,7 +273,10 @@ def _verify_bundle_archive(path, cache_dir=None):
             cache_root = Path(cache_dir).expanduser().resolve() if cache_dir else default_catalog_cache_dir()
             destination = cache_root / "bundles" / bundle_hash
             if destination.is_dir():
-                return _verify_bundle_directory(destination)
+                try:
+                    return _verify_bundle_directory(destination)
+                except CatalogError:
+                    shutil.rmtree(destination, ignore_errors=True)
             staging_parent = cache_root / "bundles"
             staging_parent.mkdir(parents=True, exist_ok=True)
             staging = Path(tempfile.mkdtemp(prefix=".bundle-", dir=str(staging_parent)))
@@ -308,19 +304,13 @@ def _ensure_local_bundle(path, cache_dir=None):
 
 
 def default_catalog_cache_dir():
-    """Return the per-user cache directory for the fetched Matrix snapshot."""
+    """Return the per-user cache directory for validated Matrix data."""
 
     if os.name == "nt":
         root = os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local")
     else:
         root = os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache")
     return Path(root) / "rocm-stack-manager" / "matrix"
-
-
-def default_matrix_raw_base_url():
-    """Return the configured Matrix source or the public default."""
-
-    return os.environ.get(MATRIX_CATALOG_URL_ENV) or DEFAULT_MATRIX_RAW_BASE_URL
 
 
 def _download_bytes(url, timeout=30):
@@ -335,21 +325,9 @@ def _download_bytes(url, timeout=30):
     except (OSError, HTTPError, URLError) as error:
         raise CatalogError(
             f"cannot fetch Matrix catalog source {url}: {error}; "
-            "use --catalog for an offline file or set ROCM_MATRIX_CATALOG_URL for a trusted mirror"
+            "use --catalog/--catalog-bundle for an offline source or set "
+            "ROCM_MATRIX_CATALOG_URL to a versioned Matrix Release asset"
         ) from error
-
-
-def _resolve_default_revision(base_url):
-    if base_url != DEFAULT_MATRIX_RAW_BASE_URL:
-        return base_url, None
-    try:
-        payload = json.loads(_download_bytes(DEFAULT_MATRIX_REVISION_URL).decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError, CatalogError) as error:
-        raise CatalogError(f"cannot resolve the Matrix main revision: {error}") from error
-    revision = payload.get("sha") if isinstance(payload, dict) else None
-    if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", revision):
-        raise CatalogError("Matrix revision response has no valid commit SHA")
-    return f"{DEFAULT_MATRIX_RAW_REVISION_URL}/{revision}", revision
 
 
 def _write_bytes_atomic(path, content):
@@ -375,6 +353,53 @@ def _safe_relative_path(value):
     return relative
 
 
+def _download_bundle(url, cache_root):
+    if not url.lower().startswith("https://"):
+        raise CatalogError("Matrix catalog URL must use HTTPS")
+    cache_root.mkdir(parents=True, exist_ok=True)
+    download_dir = cache_root / ".downloads"
+    download_dir.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=".matrix-bundle-",
+        suffix=".zip",
+        dir=str(download_dir),
+    )
+    temporary = Path(temporary_name)
+    try:
+        content = _download_bytes(url)
+        with os.fdopen(descriptor, "wb") as handle:
+            descriptor = None
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        catalog_path = _ensure_local_bundle(temporary, cache_dir=cache_root)
+        bundle_root = catalog_path.parent.parent
+        manifest = _read_json(bundle_root / BUNDLE_MANIFEST_PATH)
+        bundle_hash = hashlib.sha256(content).hexdigest()
+        relative_root = bundle_root.relative_to(cache_root).as_posix()
+        pointer = {
+            "schema_version": 1,
+            "source": url,
+            "bundle_version": manifest["bundle_version"],
+            "bundle_sha256": bundle_hash,
+            "path": relative_root,
+            "cached_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        }
+        _write_bytes_atomic(
+            cache_root / BUNDLE_CACHE_POINTER,
+            (json.dumps(pointer, indent=2, sort_keys=True) + "\n").encode("utf-8"),
+        )
+        return catalog_path
+    except CatalogError:
+        raise
+    except (OSError, KeyError) as error:
+        raise CatalogError(f"cannot cache Matrix catalog bundle from {url}: {error}") from error
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        temporary.unlink(missing_ok=True)
+
+
 def ensure_catalog(
     path=None,
     *,
@@ -383,11 +408,10 @@ def ensure_catalog(
     base_url=None,
     refresh=False,
 ):
-    """Resolve an explicit catalog or fetch the official Matrix snapshot.
+    """Resolve an explicit catalog or a versioned Matrix release bundle.
 
-    An explicit path never performs network access. When omitted, the first
-    user-triggered catalog command downloads the generated catalog, all files
-    it references, and the ComfyUI profiles into a per-user cache.
+    Explicit paths never perform network access. A configured release URL is
+    downloaded only when no verified bundle cache exists or refresh is set.
     """
 
     if path is not None and bundle_path is not None:
@@ -398,74 +422,17 @@ def ensure_catalog(
         return Path(path).expanduser().resolve()
 
     cache_root = Path(cache_dir).expanduser().resolve() if cache_dir else default_catalog_cache_dir()
+    source = str(base_url or os.environ.get(MATRIX_CATALOG_URL_ENV) or "").strip()
     if not refresh:
-        cached = _cached_catalog_path(cache_root)
-        if cached is not None:
-            return cached
-
-    base, revision = _resolve_default_revision(str(base_url or default_matrix_raw_base_url()).rstrip("/"))
-    staging_parent = cache_root / "snapshots"
-    staging_parent.mkdir(parents=True, exist_ok=True)
-    staging = Path(tempfile.mkdtemp(prefix="matrix-", dir=str(staging_parent)))
-    try:
-        catalog_bytes = _download_bytes(f"{base}/data/catalog.json")
-        try:
-            catalog_document = json.loads(catalog_bytes.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as error:
-            raise CatalogError("downloaded Matrix catalog is not valid UTF-8 JSON") from error
-        _validate_catalog_index(catalog_document)
-        relative_paths = []
-        for artifact in catalog_document.get("artifacts", []):
-            if not isinstance(artifact, dict) or not artifact.get("path"):
-                continue
-            relative_paths.append(_safe_relative_path(artifact["path"]))
-        required_paths = tuple(dict.fromkeys(relative_paths))
-        for relative_path in required_paths:
-            content = _download_bytes(f"{base}/{relative_path.as_posix()}")
-            artifact = next(item for item in catalog_document["artifacts"] if item["path"] == relative_path.as_posix())
-            if hashlib.sha256(content).hexdigest() != artifact["sha256"]:
-                raise CatalogError(f"downloaded Matrix artifact hash mismatch: {artifact['id']}")
-            _write_bytes_atomic(staging / relative_path, content)
-        _write_bytes_atomic(staging / "data" / "catalog.json", catalog_bytes)
-        catalog_destination = staging / "data" / "catalog.json"
-        _validate_cached_bundle(catalog_destination)
-        snapshot_name = hashlib.sha256(catalog_bytes).hexdigest()
-        snapshot_destination = cache_root / "snapshots" / snapshot_name
-        if snapshot_destination.exists():
-            existing_catalog = snapshot_destination / "data" / "catalog.json"
-            try:
-                _validate_cached_bundle(existing_catalog)
-            except CatalogError:
-                shutil.rmtree(snapshot_destination)
-                os.replace(staging, snapshot_destination)
-            else:
-                shutil.rmtree(staging, ignore_errors=True)
-        else:
-            os.replace(staging, snapshot_destination)
-        catalog_destination = snapshot_destination / "data" / "catalog.json"
-        manifest = {
-            "source": base,
-            "revision": revision,
-            "catalog_sha256": hashlib.sha256(catalog_bytes).hexdigest(),
-            "fetched_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-            "artifact_count": len(required_paths),
-            "snapshot": f"snapshots/{snapshot_name}",
-        }
-        _write_bytes_atomic(
-            cache_root / "source-manifest.json",
-            (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8"),
+        cached_bundle = _cached_bundle_path(cache_root)
+        if cached_bundle is not None:
+            return cached_bundle
+    if not source:
+        raise CatalogError(
+            "no Matrix Release bundle URL configured; use --catalog, "
+            "--catalog-bundle, or --catalog-url"
         )
-        _write_bytes_atomic(
-            cache_root / "current.json",
-            (json.dumps({"schema_version": 1, "snapshot": f"snapshots/{snapshot_name}", "catalog_sha256": snapshot_name}, indent=2, sort_keys=True) + "\n").encode("utf-8"),
-        )
-        return catalog_destination
-    except CatalogError:
-        raise
-    except OSError as error:
-        raise CatalogError(f"cannot store Matrix catalog cache at {cache_root}: {error}") from error
-    finally:
-        shutil.rmtree(staging, ignore_errors=True)
+    return _download_bundle(source, cache_root)
 
 
 def _read_json(path):
