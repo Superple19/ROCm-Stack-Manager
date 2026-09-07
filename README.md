@@ -320,6 +320,15 @@ Install the optional development quality tools with the project extra:
 python -m pip install --editable ".[dev]"
 ```
 
+Install the `prek` commit-message hook once per checkout:
+
+```powershell
+.\.venv\Scripts\prek.exe install --force
+```
+
+Commit messages require a Conventional Commit subject, one blank separator
+line, and consecutive `-` body bullets.
+
 Run the required lint gate and the advisory analyses:
 
 ```powershell

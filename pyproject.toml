@@ -13,6 +13,7 @@ dependencies = ["packaging>=24"]
 ui = ["PySide6>=6.11.1,<7"]
 dev = [
   "deptry>=0.23",
+  "prek>=0.5.2,<0.6",
   "pyright>=1.1.390",
   "ruff>=0.16",
   "vulture>=2.14",
