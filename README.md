@@ -133,6 +133,11 @@ for a trusted mirror or a local test server. The same source can be configured
 with `ROCM_MATRIX_CATALOG_URL`; when `--gfx` is omitted, a single GFX target
 reported by the selected target Python is used automatically. Multiple or
 undetected targets require an explicit `--gfx` value.
+For a pinned Matrix release bundle, pass `--catalog-bundle` with either the
+ZIP asset or an extracted bundle directory. The Manager verifies its manifest,
+contract version, artifact paths, compatibility, and SHA-256 digests before
+loading `data/catalog.json`.
+
 Automatic catalog fetch requires the configured Matrix source to be reachable
 and publicly readable. If it is unavailable, use `--catalog` with a local
 Matrix checkout or set `ROCM_MATRIX_CATALOG_URL` to a trusted mirror.

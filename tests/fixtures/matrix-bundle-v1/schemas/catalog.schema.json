@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Superple19/rocm-evidence-matrix/schemas/catalog.schema.json",
+  "title": "ROCm machine-readable artifact catalog",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "generated_at", "dimensions", "artifacts"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "dimensions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["distribution_families", "platforms", "channels"],
+      "properties": {
+        "distribution_families": {"type": "array", "items": {"enum": ["therock", "legacy", "external"]}},
+        "platforms": {"type": "array", "items": {"enum": ["windows", "linux", "macos", "unknown"]}},
+        "channels": {"type": "array", "items": {"enum": ["stable", "nightly", "staging", "external"]}}
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "path", "schema", "schema_version", "sha256"],
+        "properties": {
+          "id": {"type": "string"},
+          "path": {"type": "string"},
+          "schema": {"type": "string"},
+          "schema_version": {"type": "integer", "minimum": 1},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        }
+      }
+    }
+  }
+}
