@@ -6,10 +6,22 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from rocm_stack_manager import cli
+from rocm_stack_manager.core.hardware import HardwareObservation
 from rocm_stack_manager.core.verify import RuntimeObservation
 
 
 class CliTests(unittest.TestCase):
+    def test_gfx_resolution_prefers_host_probe_before_target_python(self):
+        observation = HardwareObservation(
+            scope="host",
+            host_platform="windows",
+            status="detected",
+            gfx_targets=("gfx1201",),
+        )
+
+        with patch("rocm_stack_manager.cli.probe_hardware", return_value=observation):
+            self.assertEqual(cli._resolve_gfx(Path("target"), object(), None), ("gfx1201", True))
+
     def test_resolve_command_accepts_exact_candidate(self):
         args = cli.parse_args(
             [

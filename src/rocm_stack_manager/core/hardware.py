@@ -11,7 +11,7 @@ from .platforms import host_platform as _host_platform
 
 _GFX_RE = re.compile(r"(?i)\b(gfx[0-9a-f]+)\b")
 _DRIVER_RE = re.compile(r"(?im)^\s*(?:driver|driver version|version)\s*[:=]\s*(\S+)")
-_TOOL_NAMES = ("hipInfo", "hipinfo", "rocminfo")
+_TOOL_NAMES = ("amd-smi", "hipInfo", "hipinfo", "rocminfo")
 
 
 @dataclass(frozen=True)
