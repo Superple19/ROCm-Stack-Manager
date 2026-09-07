@@ -21,79 +21,73 @@ hostname, driver detail, GPU result, or environment value is sent automatically.
 
 ## Install from a clone
 
-The repository uses a standard `src` package layout. Install it into a
-virtual environment before invoking the module or console script; do not set
-`PYTHONPATH` manually.
+The repository uses a standard `src` package layout. `uv` manages the local
+environment and lockfile; do not set `PYTHONPATH` manually.
 
 ```powershell
 git clone <repository-url>
 cd rocm-stack-manager
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install --editable .
-.\.venv\Scripts\Activate.ps1
-.\.venv\Scripts\python.exe -m rocm_stack_manager --help
-.\.venv\Scripts\rocm-stack-manager.exe --help
-.\.venv\Scripts\python.exe -m pip install --editable ".[ui]"
-.\.venv\Scripts\rocm-stack-manager-gui.exe
+uv sync --locked
+uv run --locked rocm-stack-manager --help
+uv sync --locked --extra ui
+uv run --locked rocm-stack-manager-gui
 # Or use the repository launcher:
 .\run-rocm-stack-manager.bat
 ```
 
-After activation, the examples below can use `python -m rocm_stack_manager`.
-On Linux, use `.venv/bin/activate`, `.venv/bin/python`, and
-`.venv/bin/rocm-stack-manager` instead.
+The examples below use `uv run --locked`, so activation is not required. On
+Linux, use the same commands and `./run-rocm-stack-manager.sh` for the UI.
 
 The first command after installation detects an existing portable or
 virtual-environment layout:
 
 ```powershell
-python -m rocm_stack_manager detect --target C:\path\to\comfyui-portable
-python -m rocm_stack_manager verify --target C:\path\to\comfyui-portable --json
-python -m rocm_stack_manager extensions report `
+uv run --locked python -m rocm_stack_manager detect --target C:\path\to\comfyui-portable
+uv run --locked python -m rocm_stack_manager verify --target C:\path\to\comfyui-portable --json
+uv run --locked python -m rocm_stack_manager extensions report `
   --target C:\path\to\comfyui-portable
-python -m rocm_stack_manager extensions plan `
+uv run --locked python -m rocm_stack_manager extensions plan `
   --target C:\path\to\comfyui-portable `
   --candidate <candidate-id>
-python -m rocm_stack_manager extensions resolve `
+uv run --locked python -m rocm_stack_manager extensions resolve `
   --target C:\path\to\comfyui-portable `
   --catalog C:\path\to\rocm-evidence-matrix\data\catalog.json `
   --candidate <candidate-id> --extension bitsandbytes
-python -m rocm_stack_manager extensions verify `
+uv run --locked python -m rocm_stack_manager extensions verify `
   --target C:\path\to\comfyui-portable `
   --catalog C:\path\to\rocm-evidence-matrix\data\catalog.json `
   --candidate <candidate-id> --extension bitsandbytes `
   --output .rocm-stack-manager\evidence\bitsandbytes.json
-python -m rocm_stack_manager extensions apply `
+uv run --locked python -m rocm_stack_manager extensions apply `
   --target C:\path\to\comfyui-portable `
   --candidate <candidate-id> --extension <extension-id> --apply
-python -m rocm_stack_manager extensions restore `
+uv run --locked python -m rocm_stack_manager extensions restore `
   --target C:\path\to\comfyui-portable `
   --backup C:\path\to\extensions-<timestamp>.json
-python -m rocm_stack_manager inventory `
+uv run --locked python -m rocm_stack_manager inventory `
   --target C:\path\to\comfyui-portable `
   --platform windows --gfx gfx1201 `
   --candidate <candidate-id>
-python -m rocm_stack_manager install `
+uv run --locked python -m rocm_stack_manager install `
   --target C:\path\to\comfyui-portable `
   --platform windows --gfx gfx1201 `
   --candidate <candidate-id>
-python -m rocm_stack_manager candidates `
+uv run --locked python -m rocm_stack_manager candidates `
   --target C:\path\to\comfyui-portable `
   --platform windows --channel stable
-python -m rocm_stack_manager candidates `
+uv run --locked python -m rocm_stack_manager candidates `
   --target C:\path\to\comfyui-portable `
   --platform windows --rocm 7.2.1
-python -m rocm_stack_manager plan `
+uv run --locked python -m rocm_stack_manager plan `
   --target C:\path\to\comfyui-portable `
   --platform windows --candidate <candidate-id>
-python -m rocm_stack_manager resolve `
+uv run --locked python -m rocm_stack_manager resolve `
   --target C:\path\to\comfyui-portable `
   --platform windows --candidate <candidate-id>
-python -m rocm_stack_manager restore `
+uv run --locked python -m rocm_stack_manager restore `
   --target C:\path\to\comfyui-portable `
   --backup C:\path\to\backup\packages-<timestamp>.json
-python -m rocm_stack_manager migrate-backup `
+uv run --locked python -m rocm_stack_manager migrate-backup `
   --backup C:\path\to\old-backup.json `
   --output C:\path\to\backup\migrated.json
 ```
@@ -271,10 +265,9 @@ selection; no GFX value is inferred from a GPU name or hardcoded into the
 interface. The shared hardware layer can also use target-local or explicitly
 available `hipInfo`/`rocminfo` tools for native runtimes such as Ollama.
 
-On Linux, create the venv with `python3 -m venv .venv`, install the optional UI
-with `.venv/bin/python -m pip install --editable '.[ui]'`, and run
-`./run-rocm-stack-manager.sh`. The launcher resolves its own repository root,
-uses only the local `.venv`, and passes additional arguments to the UI.
+On Linux, install the optional UI with `uv sync --locked --extra ui`, then run
+`./run-rocm-stack-manager.sh`. The launcher resolves its own repository root
+and passes additional arguments to the UI.
 
 ## Repository layout
 
@@ -311,19 +304,19 @@ behavior separate.
 ## Development
 
 ```powershell
-python -m unittest discover -s tests -v
+uv run --locked python -m unittest discover -s tests -v
 ```
 
 Install the optional development quality tools with the project extra:
 
 ```powershell
-python -m pip install --editable ".[dev]"
+uv sync --locked --extra dev
 ```
 
 Install the `prek` commit-message hook once per checkout:
 
 ```powershell
-.\.venv\Scripts\prek.exe install --force
+uv run --locked prek install --force
 ```
 
 Commit messages require a Conventional Commit subject, one blank separator
@@ -332,11 +325,11 @@ line, and consecutive `-` body bullets.
 Run the required lint gate and the advisory analyses:
 
 ```powershell
-ruff check .
-ruff format --check .
-pyright
-deptry .
-vulture src tests --min-confidence 100 --ignore-names options
+uv run --locked ruff check .
+uv run --locked ruff format --check .
+uv run --locked pyright
+uv run --locked deptry .
+uv run --locked vulture src tests --min-confidence 100 --ignore-names options
 ```
 
 `ruff check` and `pyright` are required in CI. Pyright remains in basic mode.
@@ -345,5 +338,5 @@ the existing codebase is being cleaned up. Do not run `ruff format --fix` as par
 behavior change. Vulture findings require review because CLI entry points and
 dynamic adapter loading can look unused to static analysis. The tools are
 development-only; the normal Manager installation does not include them.
-Import Linter and `uv` are intentionally deferred until the adapter boundaries
-and development workflow are stable.
+Import Linter remains intentionally deferred until the adapter boundaries are
+stable.
