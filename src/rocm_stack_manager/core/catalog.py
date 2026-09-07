@@ -48,7 +48,11 @@ REQUIRED_BUNDLE_ARTIFACT_IDS = {
 def _canonical_artifact_bytes(path):
     """Match Matrix catalog hashes across Windows and Unix checkout endings."""
 
-    return path.read_bytes().replace(b"\r\n", b"\n")
+    return _canonical_artifact_content(path.read_bytes())
+
+
+def _canonical_artifact_content(content):
+    return content.replace(b"\r\n", b"\n")
 
 
 def _is_sha256(value):
@@ -270,7 +274,7 @@ def _verify_bundle_archive(path, cache_dir=None):
                 raise CatalogError("Matrix bundle ZIP files do not match its manifest")
             for artifact in artifacts:
                 content = archive.read(artifact["path"])
-                if hashlib.sha256(content).hexdigest() != artifact["sha256"]:
+                if hashlib.sha256(_canonical_artifact_content(content)).hexdigest() != artifact["sha256"]:
                     raise CatalogError(f"Matrix bundle artifact hash mismatch: {artifact['id']}")
             bundle_hash = hashlib.sha256(path.read_bytes()).hexdigest()
             cache_root = Path(cache_dir).expanduser().resolve() if cache_dir else default_catalog_cache_dir()
