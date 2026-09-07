@@ -1,6 +1,7 @@
 import subprocess
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from rocm_stack_manager.core.resolver import build_resolver_command, run_resolver
 from rocm_stack_manager.core.identity import candidate_hash
@@ -12,9 +13,9 @@ class CoreResolverTests(unittest.TestCase):
             "Target",
             (),
             {
-                "root": Path("C:/target"),
-                "comfyui_dir": Path("C:/target"),
-                "python_executable": Path("C:/target/python.exe"),
+                "root": Path("target"),
+                "comfyui_dir": Path("target"),
+                "python_executable": Path("target/python.exe"),
             },
         )()
         self.candidate = {
@@ -63,20 +64,23 @@ class CoreResolverTests(unittest.TestCase):
             stdout="Would install torch",
             stderr="",
         )
-        result = run_resolver(
-            self.target,
-            self.candidate,
-            catalog_hash="catalog-hash",
-            adapter_id="comfyui",
-            target_gfx="gfx1201",
-            runner=lambda *args, **kwargs: completed,
-        )
+        with patch("rocm_stack_manager.core.planning.host_platform", return_value="windows"):
+            result = run_resolver(
+                self.target,
+                self.candidate,
+                catalog_hash="catalog-hash",
+                adapter_id="comfyui",
+                target_gfx="gfx1201",
+                runner=lambda *args, **kwargs: completed,
+            )
 
+        target_root = str(self.target.root.resolve())
+        target_python = str(self.target.python_executable.resolve())
         self.assertEqual(
             result.binding,
             {
-                "target_root": "C:\\target",
-                "target_python": "C:\\target\\python.exe",
+                "target_root": target_root,
+                "target_python": target_python,
                 "target_platform": "windows",
                 "target_gfx": "gfx1201",
                 "candidate_hash": candidate_hash(self.candidate),
