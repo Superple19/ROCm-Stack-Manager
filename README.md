@@ -222,21 +222,28 @@ write Matrix evidence, and returns `resolver_verified` or `resolver_failed`
 for that candidate only. Use `--output` to save an explicit local result.
 
 The optional PySide6 interface is an inspection and safety-gated operation
-layer over the same core services. Its `Setup`, `Candidates`, `Extensions`,
-and `Activity` tabs separate target/catalog configuration, candidate selection,
-extension inventory, and operation output. It supports target detection, Matrix
-catalog loading, candidate filtering, inventory, runtime verification, and
-core/extension dry-runs. Candidate filters include distribution family,
-current/historical lifecycle, channel, ROCm version, and candidate state. The
-tables keep long paths and evidence identifiers inside scrollable or wrapped
-regions; full operation records remain available in the Activity output. The
-candidate table shows the target platform and exact candidate ID so historical
-artifact records are not silently collapsed into one row per channel. Core package apply and
-package/extension restore require a completed dry-run,
-target-local backup, and explicit confirmation. Extension apply remains
-disabled unless every selected extension has exact Matrix source and evidence.
-The UI persists harmless preferences such as the last target/catalog paths,
-filters, selected tab, and window geometry through the platform settings store.
+layer over the same core services. Its workspace shell has an `Overview`
+page, `Candidates`, `Extensions`, `Activity`, and `Settings` pages, with a
+global adapter/target bar and a sidebar for navigation. Overview shows compact
+Target, Package snapshot, and Matrix catalog status surfaces; the package card
+keeps ROCm, Torch, TorchVision, and TorchAudio as separate metrics. Long package
+records are available through `View details`, not hover tooltips. Candidates
+uses a filter rail, a list-detail layout, and an action bar for verification and
+  dry-runs. Candidate rows show version set, GFX, Python, platform, candidate kind,
+  evidence, resolver state, and text warnings; stable identity and provenance stay
+  in the details pane. Extensions shows a compact status table with a separate
+  evidence details pane and an explicit `Refresh inventory` action. Activity is
+  summary-first: each operation is a selectable timeline item whose formatted JSON
+  can be copied or saved on demand. Candidate filters
+include distribution family, current/historical lifecycle, channel, ROCm
+version, and candidate state. Core package apply and package/extension restore
+require a completed dry-run, target-local backup, and explicit confirmation.
+Extension apply remains disabled unless every selected extension has exact Matrix
+source and evidence.
+  The UI persists harmless preferences such as the last target/catalog paths
+  independently, filters, selected page, startup snapshot and no-auto-refresh
+  preferences, appearance choices, activity retention, and window geometry through
+the platform settings store.
 It does not persist detection results, candidates, dry-run plans, restore plans,
 or apply approvals. A saved path is used at startup only for the read-only
 snapshot described below. When a
@@ -257,14 +264,12 @@ After target detection, the UI also runs a local ComfyUI extension inventory
 without network access. Installed extensions are shown separately from Matrix
 claim status; an installed extension with missing ABI evidence remains
 `unknown` and cannot produce an install command.
-When the UI starts, it performs a host-scoped `hipInfo`/`rocminfo` probe when
-one is available and shows the result as a provisional GFX hint. This does not
-claim that a candidate is compatible. After target detection, the UI probes
-the target Python and target-local tools and replaces the hint with target
-runtime evidence. Multiple detected GFX targets remain a manual selection; no
-GFX value is inferred from a GPU name or hardcoded into the interface. The
-shared hardware layer can also use target-local or explicitly available
-`hipInfo`/`rocminfo` tools for native runtimes such as Ollama.
+The UI does not perform a host hardware probe on startup. After explicit target
+detection, `Verify target` probes the target Python and target-local tools for
+runtime and hardware evidence. Multiple detected GFX targets remain a manual
+selection; no GFX value is inferred from a GPU name or hardcoded into the
+interface. The shared hardware layer can also use target-local or explicitly
+available `hipInfo`/`rocminfo` tools for native runtimes such as Ollama.
 
 On Linux, create the venv with `python3 -m venv .venv`, install the optional UI
 with `.venv/bin/python -m pip install --editable '.[ui]'`, and run

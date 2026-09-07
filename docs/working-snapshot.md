@@ -153,6 +153,36 @@ apply requires both `--allow-unverified` and `--apply`, after reviewing a
 successful targeted preflight. Extension backups and restores are separate
 from core package backups.
 
+## PySide6 workspace
+
+The optional GUI uses a sidebar workspace rather than a single form page:
+
+- `Overview` shows compact Target, Package snapshot, and Matrix catalog status
+  cards. The package snapshot keeps ROCm, Torch, TorchVision, and TorchAudio in
+  separate metrics; catalog status includes the hash prefix, artifact count,
+  and source failures. Its quick actions are `Detect target`, `Load catalog`,
+  and `Find candidates`; use `View details` for formatted target, inventory, or
+  catalog JSON.
+- `Candidates` uses a collapsible filter rail, compact version/GFX/Python rows,
+  a provenance details pane, and a bottom action bar. Selecting a row never
+  applies or selects a package automatically.
+- `Extensions` keeps extension status separate from core packages. Use `Refresh
+  inventory`, then select a row to inspect artifact, ABI, Matrix claim, and reason
+  details.
+- `Activity` is summary-first. Select an operation to view its details, then
+  use `Copy details` or save a local JSON file. Raw JSON is not displayed in
+  status-label hover tooltips.
+- `Settings` controls independent target/catalog path restoration, read-only
+  startup snapshots, no automatic network refresh, appearance, activity
+  retention, and diagnostic preferences. Candidates, plans, approvals, and apply
+  results are never restored.
+
+The global target bar is available on every page. `Detect` only discovers the
+selected target and reads local metadata; runtime/hardware verification remains
+an explicit action. Catalog refresh is also explicit and never runs in the
+background. Apply and restore remain disabled until their respective dry-runs
+and confirmation steps succeed.
+
 ## Troubleshooting
 
 - `target GFX was not detected`: pass `--gfx` explicitly; no GPU name is used

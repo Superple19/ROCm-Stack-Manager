@@ -5,19 +5,14 @@ from PySide6 import QtCore
 
 class CandidateTableModel(QtCore.QAbstractTableModel):
     HEADERS = (
-        "Family",
-        "Platform",
-        "Lifecycle",
-        "Channel",
+        "Version set",
         "GFX",
-        "ROCm",
-        "Torch",
-        "TorchVision",
         "Python",
+        "Platform",
         "Kind",
         "Evidence",
-        "Profile",
-        "Candidate ID",
+        "Resolver",
+        "Warnings",
     )
 
     def __init__(self, parent=None):
@@ -44,20 +39,24 @@ class CandidateTableModel(QtCore.QAbstractTableModel):
         }:
             return None
         candidate = self._rows[index.row()]
+        warnings = list(candidate.get("profile_warnings") or candidate.get("warnings") or ())
+        resolver_status = candidate.get("resolver_status") or "not_collected"
+        evidence = candidate.get("evidence_level") or candidate.get("evidence_status") or "unknown"
+        if isinstance(evidence, dict):
+            evidence = evidence.get("overall") or evidence.get("artifact") or "unknown"
+        version_set = " / ".join(
+            str(candidate.get(key) or "unknown")
+            for key in ("rocm_version", "torch_version", "torchvision_version")
+        )
         values = (
-            candidate.get("distribution_family") or "unknown",
-            candidate.get("platform") or "unknown",
-            candidate.get("lifecycle") or "unknown",
-            candidate.get("channel") or "unknown",
+            version_set,
             candidate.get("gfx") or "unknown",
-            candidate.get("rocm_version") or "unknown",
-            candidate.get("torch_version") or "unknown",
-            candidate.get("torchvision_version") or "unknown",
             candidate.get("python_compatibility") or "unknown",
+            candidate.get("platform") or "unknown",
             candidate.get("candidate_kind") or "unknown",
-            candidate.get("resolver_status") or candidate.get("status") or "unknown",
-            candidate.get("profile_status") or "unknown",
-            candidate.get("id") or "unknown",
+            str(evidence),
+            resolver_status,
+            "; ".join(str(warning) for warning in warnings) or "none",
         )
         return values[index.column()]
 

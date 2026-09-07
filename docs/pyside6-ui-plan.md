@@ -88,6 +88,33 @@ The service boundary should accept plain paths and immutable request values,
 then return existing domain dataclasses or JSON-compatible dictionaries. It
 must not create a second installation or candidate model.
 
+## Current workspace shell
+
+The current PySide6 workspace uses a `QStackedWidget` with a left sidebar and a
+global adapter/target bar. Its pages are `Overview`, `Candidates`, `Extensions`,
+`Activity`, and `Settings`.
+
+- `Overview` contains compact Target, Package snapshot, and Matrix catalog
+  surfaces. The package card presents ROCm, Torch, TorchVision, and TorchAudio
+  as separate metrics, with three explicit quick actions and detailed records
+  in a copy/save dialog.
+- `Candidates` uses a collapsible filter rail, compact version/GFX/Python rows,
+  a provenance details pane, and a bottom action bar. Stable identity and
+  warnings are kept out of the dense table.
+- `Extensions` uses a compact five-column status table, an explicit inventory
+  refresh action, and a separate details pane for artifact, ABI, Matrix claim,
+  and reason data.
+- `Activity` is summary-first. Operations appear as selectable records; the
+  formatted JSON is shown only after selecting a record and can be copied.
+- `Settings` exposes independent target/catalog path restoration, read-only
+  startup snapshots, no automatic network refresh, appearance, activity
+  retention, and diagnostics preferences. It never restores a candidate, plan,
+  approval, or apply result.
+
+The shell remains in `main_window.py` while service and worker boundaries stay
+unchanged. Future extraction into `pages/` and `components/` is a maintenance
+refactor only; it must not move package policy into the UI.
+
 ## User workflow
 
 ### 1. Target selection

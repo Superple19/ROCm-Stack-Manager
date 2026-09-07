@@ -45,7 +45,7 @@ class UiTests(unittest.TestCase):
         self.assertEqual(window.windowTitle(), "ROCm Stack Manager")
         self.assertEqual(
             [window.tabs.tabText(index) for index in range(window.tabs.count())],
-            ["Setup", "Candidates", "Extensions", "Activity"],
+            ["Overview", "Candidates", "Extensions", "Activity", "Settings"],
         )
         self.assertEqual(window.adapter_combo.currentText(), "comfyui")
         self.assertEqual(
@@ -65,6 +65,82 @@ class UiTests(unittest.TestCase):
             QtWidgets.QSizePolicy.Policy.Ignored,
         )
         self.assertIs(window.tabs.widget(3).findChild(QtWidgets.QPlainTextEdit), window.output)
+        window.close()
+
+    def test_workspace_sidebar_switches_stacked_pages(self):
+        window = MainWindow()
+        self.assertIsInstance(window.tabs, QtWidgets.QStackedWidget)
+        for index, button in enumerate(window.navigation_buttons):
+            button.click()
+            self.assertEqual(window.tabs.currentIndex(), index)
+            self.assertTrue(button.isChecked())
+        window.close()
+
+    def test_workspace_surfaces_match_the_five_stage_plan(self):
+        window = MainWindow()
+        self.assertEqual(
+            [window.overview_detect_button.text(), window.overview_load_catalog_button.text(), window.overview_find_button.text()],
+            ["Detect target", "Load catalog", "Find candidates"],
+        )
+        self.assertFalse(window.overview_verify_button.isVisible())
+        self.assertEqual(window.refresh_extension_button.text(), "Refresh inventory")
+        self.assertEqual(window.candidate_model.HEADERS, (
+            "Version set", "GFX", "Python", "Platform", "Kind", "Evidence", "Resolver", "Warnings"
+        ))
+        self.assertEqual(window.restore_target_path_check.text(), "Restore last target path")
+        self.assertEqual(window.restore_catalog_path_check.text(), "Restore last catalog path")
+        self.assertTrue(window.never_refresh_network_check.isChecked())
+        self.assertEqual(window.theme_combo.currentText(), "System")
+        self.assertEqual(window.density_combo.currentText(), "Comfortable")
+        window.close()
+
+    def test_candidate_rows_show_compact_identity_and_warning(self):
+        window = MainWindow()
+        window.candidate_model.set_rows([
+            {
+                "rocm_version": "7.14.0",
+                "torch_version": "2.12.0",
+                "torchvision_version": "0.27.0",
+                "gfx": "gfx1201",
+                "python_compatibility": "cp312",
+                "platform": "windows",
+                "candidate_kind": "artifact_only",
+                "evidence_level": "artifact_available",
+                "resolver_status": "not_collected",
+                "profile_warnings": ["resolver evidence not collected"],
+            }
+        ])
+        values = [
+            window.candidate_model.data(window.candidate_model.index(0, column))
+            for column in range(window.candidate_model.columnCount())
+        ]
+        self.assertEqual(values[0], "7.14.0 / 2.12.0 / 0.27.0")
+        self.assertEqual(values[4], "artifact_only")
+        self.assertEqual(values[6], "not_collected")
+        self.assertIn("resolver evidence", values[7])
+        window.close()
+
+    def test_activity_retention_keeps_summary_records_bounded(self):
+        window = MainWindow()
+        window.activity_retention_spin.setValue(10)
+        for index in range(11):
+            window._append_json({f"operation_{index}": {"status": "ok"}})
+        self.assertEqual(window.activity_list.count(), 10)
+        self.assertEqual(len(window._activity_records), 10)
+        self.assertIn("Operation 10", window.activity_list.item(9).text())
+        window.close()
+
+    def test_candidate_filter_rail_can_be_hidden(self):
+        window = MainWindow()
+        window.show()
+        window.tabs.setCurrentIndex(1)
+        self.application.processEvents()
+        self.assertTrue(window.filter_rail.isVisible())
+        window.filters_button.click()
+        self.assertFalse(window.filter_rail.isVisible())
+        self.assertEqual(window.filters_button.text(), "Show filters")
+        window.filters_button.click()
+        self.assertTrue(window.filter_rail.isVisible())
         window.close()
 
     def test_ui_settings_restore_configuration_without_restoring_plans(self):
@@ -133,9 +209,16 @@ class UiTests(unittest.TestCase):
                 window._start_saved_snapshot()
 
             self.assertEqual(service.target, target)
-            self.assertIn("torch==2.12.0+rocm7.14.0", window.snapshot_summary.text())
-            self.assertIn("Extensions: bitsandbytes==0.50.0", window.snapshot_summary.text())
+            self.assertEqual(
+                window.snapshot_metric_values["torch"].text(),
+                "2.12.0+rocm7.14.0",
+            )
+            self.assertEqual(window.snapshot_summary.toolTip(), window.snapshot_summary.text())
+            self.assertNotIn('"requires"', window.snapshot_summary.toolTip())
             self.assertIn("Read saved target snapshot", calls)
+            activity_details = "\n".join(record["details"] for record in window._activity_records)
+            self.assertIn('"compiled_extension_count": 1', activity_details)
+            self.assertNotIn('"requires"', activity_details)
             inspect.assert_not_called()
             window.close()
 
@@ -180,7 +263,13 @@ class UiTests(unittest.TestCase):
 
             self.assertEqual(service.target, target)
             self.assertIn("Read target package snapshot", calls)
-            self.assertIn("torch==2.12.0+rocm7.14.0", window.snapshot_summary.text())
+            self.assertEqual(
+                window.snapshot_metric_values["torch"].text(),
+                "2.12.0+rocm7.14.0",
+            )
+            self.assertNotIn('"requires"', window.snapshot_summary.toolTip())
+            activity_details = "\n".join(record["details"] for record in window._activity_records)
+            self.assertIn('"compiled_extension_count": 0', activity_details)
             window.close()
 
     def test_service_prepares_startup_snapshot_without_runtime_or_hardware_probe(self):
@@ -298,6 +387,11 @@ class UiTests(unittest.TestCase):
             self.assertTrue(window.extension_button.isEnabled())
             self.assertFalse(window.apply_core_button.isEnabled())
             self.assertFalse(window.apply_extension_button.isEnabled())
+            details = window.candidate_details.toPlainText()
+            self.assertIn('"stable_id":', details)
+            self.assertIn('"adapter_id": "comfyui"', details)
+            self.assertIn('"target_gfx":', details)
+            self.assertFalse(window.overview_verify_button.isHidden())
             window.close()
 
     def test_candidate_summary_includes_lifecycle_and_state_counts(self):
@@ -333,9 +427,24 @@ class UiTests(unittest.TestCase):
         )
         self.assertEqual(window.extension_table.rowCount(), 1)
         self.assertEqual(window.extension_table.item(0, 1).text(), "unknown")
-        self.assertEqual(window.extension_table.columnCount(), 10)
-        self.assertEqual(window.extension_table.horizontalHeaderItem(5).text(), "Artifact platform")
+        self.assertEqual(window.extension_table.columnCount(), 5)
+        self.assertEqual(window.extension_table.horizontalHeaderItem(4).text(), "Evidence")
         self.assertIn("1 known extensions", window.extension_summary.text())
+        window.extension_table.selectRow(0)
+        self.application.processEvents()
+        self.assertIn("missing ABI evidence", window.extension_details.toPlainText())
+        window.close()
+
+    def test_activity_shows_summary_before_details(self):
+        window = MainWindow()
+        window._append_json(
+            {"target_package_inventory": {"status": "detected", "compiled_extension_count": 3}}
+        )
+        self.assertEqual(window.activity_list.count(), 1)
+        self.assertEqual(window.output.toPlainText(), "")
+        window.activity_list.setCurrentRow(0)
+        self.application.processEvents()
+        self.assertIn('"compiled_extension_count": 3', window.output.toPlainText())
         window.close()
 
     def test_service_loads_explicit_local_catalog_without_network(self):
