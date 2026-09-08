@@ -155,6 +155,13 @@ class ExtensionReportTests(unittest.TestCase):
         self.assertEqual(bitsandbytes["matrix_claim_status"], "unverified")
         self.assertEqual(bitsandbytes["matrix_evidence_refs"], ["source:test"])
 
+    def test_report_exposes_pinned_official_source(self):
+        report = build_extension_report(PackageInventory(Path("C:/target"), None, (), "detected"))
+        bitsandbytes = next(item for item in report["extensions"] if item["id"] == "bitsandbytes")
+
+        self.assertEqual(bitsandbytes["official_source"]["revision_type"], "commit")
+        self.assertEqual(bitsandbytes["official_source"]["package_names"], ["bitsandbytes"])
+
     def test_unverified_profiles_cannot_create_install_commands(self):
         target = type("Target", (), {"root": Path("C:/target"), "python_executable": Path("C:/target/python.exe")})()
         inventory = PackageInventory(Path("C:/target"), target.python_executable, (), "detected")

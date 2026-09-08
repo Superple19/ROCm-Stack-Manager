@@ -48,3 +48,9 @@ selected core/extension pair and never install packages. Runtime and hardware
 exports retain the core candidate hash and extension candidate IDs, but are
 marked for manual review and are not promoted to Matrix compatibility claims
 automatically.
+
+Manager keeps the benchmark extension provenance manifest in
+`src/rocm_stack_manager/data/extension-sources.json`. It pins each official
+upstream repository to a tag or full commit and lists package names and install
+methods. The manifest is an identity and reproducibility boundary only; local
+installation and runtime validation remain separate operations.

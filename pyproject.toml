@@ -47,3 +47,6 @@ rocm-stack-manager-gui = "rocm_stack_manager.ui.app:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+rocm_stack_manager = ["data/*.json"]

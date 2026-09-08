@@ -12,6 +12,7 @@ from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
 
 from ...core.identity import extension_candidate_id
+from ...core.extension_sources import load_extension_sources
 from ...core.verify import _clean_environment
 
 @dataclass(frozen=True)
@@ -61,6 +62,8 @@ PROFILES = (
         "optional_backend",
     ),
 )
+
+OFFICIAL_SOURCES = load_extension_sources()
 
 
 def _normalize(value):
@@ -565,6 +568,7 @@ def build_extension_report(inventory, profile_documents=None, candidate=None, ex
                     "core_required": core_required,
                     "candidate_hash": (candidate or {}).get("candidate_hash"),
                     "extension_candidate_id": (catalog["extension_candidate_ids"] or [None])[0],
+                    "official_source": OFFICIAL_SOURCES[profile.id],
                     "installed": [],
                     "reason": "package is not installed in the target environment",
                     "install_policy": profile.install_policy,
@@ -600,6 +604,7 @@ def build_extension_report(inventory, profile_documents=None, candidate=None, ex
                 "core_required": core_required,
                 "candidate_hash": (candidate or {}).get("candidate_hash"),
                 "extension_candidate_id": (catalog["extension_candidate_ids"] or [None])[0],
+                "official_source": OFFICIAL_SOURCES[profile.id],
                 "installed": [
                     {"name": package["name"], "version": package["version"]}
                     for package in installed
