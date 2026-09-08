@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "extensions": [
+    {
+      "id": "bitsandbytes",
+      "repository": "https://github.com/bitsandbytes-foundation/bitsandbytes",
+      "revision": "833649043474794b8fe7a4136e0c40faf077b2e0",
+      "revision_type": "commit",
+      "package_names": ["bitsandbytes"],
+      "install_methods": ["pypi", "source"]
+    },
+    {
+      "id": "flash-attention",
+      "repository": "https://github.com/Dao-AILab/flash-attention",
+      "revision": "ce088ab9ce0fc0434dcd8afa0a791da9fcc3a820",
+      "revision_type": "commit",
+      "package_names": ["flash-attn", "flash-attention"],
+      "install_methods": ["pypi", "source"]
+    },
+    {
+      "id": "aiter",
+      "repository": "https://github.com/ROCm/aiter",
+      "revision": "9664fbb5789858408a01937f72e62ff64254126a",
+      "revision_type": "commit",
+      "package_names": ["aiter", "amd-aiter"],
+      "install_methods": ["pypi", "source"]
+    },
+    {
+      "id": "sageattention",
+      "repository": "https://github.com/thu-ml/SageAttention",
+      "revision": "d1a57a546c3d395b1ffcbeecc66d81db76f3b4b5",
+      "revision_type": "commit",
+      "package_names": ["sageattention", "sage-attention"],
+      "install_methods": ["pypi", "source"]
+    },
+    {
+      "id": "triton",
+      "repository": "https://github.com/triton-lang/triton",
+      "revision": "f9f66876174b589677497cf3123f953ca0b45e7e",
+      "revision_type": "commit",
+      "package_names": ["triton", "triton-windows"],
+      "install_methods": ["source", "matrix"]
+    }
+  ]
+}

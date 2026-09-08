@@ -24,6 +24,13 @@ hostname, driver detail, GPU result, or environment value is sent automatically.
 The repository uses a standard `src` package layout. `uv` manages the local
 environment and lockfile; do not set `PYTHONPATH` manually.
 
+Pinned official upstream identities for the supported ComfyUI extension
+packages are bundled in
+`src/rocm_stack_manager/data/extension-sources.json`. Each entry records an
+HTTPS GitHub repository, a tag or full commit revision, package names, and
+available install methods. This manifest identifies upstream provenance only;
+it does not claim ROCm, Torch, GFX, runtime, or performance compatibility.
+
 ```powershell
 git clone <repository-url>
 cd rocm-stack-manager
